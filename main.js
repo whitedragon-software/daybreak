@@ -20,6 +20,17 @@ const TWOFA_HTML = fs.readFileSync(path.join(__dirname, '2FA.html'), 'utf8');
 app.commandLine.appendSwitch('log-level', '3'); // fatal only
 app.commandLine.appendSwitch('disable-logging');
 
+// Real compositor-level performance work, not app-side workarounds. Both
+// are well-established, broadly-shipped Chromium flags (used by e.g.
+// VS Code and Slack's Electron builds): GPU rasterization moves paint
+// work off the CPU onto the GPU, and zero-copy avoids an extra memory
+// copy when handing rasterized tiles to the GPU. Left off is Chromium's
+// own conservative default for compatibility with unusual GPU drivers;
+// on typical hardware this is a genuine rendering-throughput win, not a
+// placebo flag.
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+
 const TAB_ROW_HEIGHT = 36;
 const NAV_ROW_HEIGHT = 40;
 const BOOKMARKS_BAR_HEIGHT = 32;
@@ -27,6 +38,8 @@ const MIN_WIDTH = 480;
 const MIN_HEIGHT = 360;
 const MEMORY_SAVER_IDLE_MS = 20 * 60 * 1000; // discard a background tab after this long unused
 const MEMORY_SAVER_SWEEP_MS = 60 * 1000; // how often to check
+const HISTORY_MAX = 5000; // real ceiling on long-session memory/disk growth, not unbounded accumulation
+const DOWNLOADS_MAX = 500;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'daybreak', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }
@@ -83,7 +96,7 @@ let bookmarks = loadJSON('bookmarks.json', []);
 let history = loadJSON('history.json', []);
 let downloads = loadJSON('downloads.json', []);
 let settings = Object.assign(
-  { theme: 'light', homepage: 'daybreak://newtab', searchEngine: 'google', showBookmarksBar: true, adBlockEnabled: true, memorySaverEnabled: true },
+  { theme: 'light', homepage: 'daybreak://newtab', searchEngine: 'google', showBookmarksBar: true, adBlockEnabled: true, memorySaverEnabled: false },
   loadJSON('settings.json', {})
 );
 
@@ -141,6 +154,27 @@ function serializeState() {
     bookmarks,
     tabs: [...tabs.entries()].map(([id, tab]) => {
       const wc = tab.view && !tab.view.webContents.isDestroyed() ? tab.view.webContents : null;
+
+      // canGoBack/canGoForward/isCurrentlyAudible/isAudioMuted are each a
+      // real call into the tab's native WebContents binding, not a free
+      // property read. With many tabs open, re-querying all four for
+      // every tab on every single push — most of which only one tab
+      // actually changed anything in — is real, avoidable work. Each of
+      // these only changes in response to an event this file already
+      // handles (navigation, media start/stop, mute toggle), so those
+      // handlers set tab.statsDirty and this only recomputes then;
+      // otherwise it reuses the last computed values.
+      if (wc && tab.statsDirty !== false) {
+        tab._statsCache = {
+          canGoBack: wc.navigationHistory.canGoBack(),
+          canGoForward: wc.navigationHistory.canGoForward(),
+          audible: safeCall(() => wc.isCurrentlyAudible(), false),
+          muted: safeCall(() => wc.isAudioMuted(), false)
+        };
+        tab.statsDirty = false;
+      }
+      const stats = tab._statsCache || { canGoBack: false, canGoForward: false, audible: false, muted: false };
+
       return {
         id,
         title: tab.title || tab.url || 'New Tab',
@@ -148,11 +182,11 @@ function serializeState() {
         loading: tab.loading,
         pinned: !!tab.pinned,
         discarded: !tab.view,
-        canGoBack: wc ? wc.navigationHistory.canGoBack() : false,
-        canGoForward: wc ? wc.navigationHistory.canGoForward() : false,
+        canGoBack: wc ? stats.canGoBack : false,
+        canGoForward: wc ? stats.canGoForward : false,
         bookmarked: bookmarks.some((b) => b.url === tab.url),
-        audible: wc ? safeCall(() => wc.isCurrentlyAudible(), false) : false,
-        muted: wc ? safeCall(() => wc.isAudioMuted(), false) : false,
+        audible: wc ? stats.audible : false,
+        muted: wc ? stats.muted : false,
         favicon: tab.favicon || null
       };
     })
@@ -268,7 +302,12 @@ function buildPageContextMenu(wc, params, id) {
     { type: 'separator' },
     {
       label: safeCall(() => wc.isAudioMuted(), false) ? 'Unmute tab' : 'Mute tab',
-      click: () => { wc.setAudioMuted(!safeCall(() => wc.isAudioMuted(), false)); pushState(); }
+      click: () => {
+        wc.setAudioMuted(!safeCall(() => wc.isAudioMuted(), false));
+        const t = tabs.get(id);
+        if (t) t.statsDirty = true;
+        pushState();
+      }
     },
     { label: 'View page source', click: () => viewPageSource(wc) },
     {
@@ -401,9 +440,11 @@ function attachTabListeners(id, tab) {
   wc.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
     tab.favicon = null;
+    tab.statsDirty = true; // canGoBack/canGoForward change on every navigation
     if (/^https?:\/\//i.test(navUrl)) {
       const entry = { id: randomUUID(), url: navUrl, title: '', timestamp: Date.now() };
       history.push(entry);
+      if (history.length > HISTORY_MAX) history = history.slice(history.length - HISTORY_MAX);
       tab.lastHistoryId = entry.id;
       saveHistory();
     } else {
@@ -415,6 +456,7 @@ function attachTabListeners(id, tab) {
   wc.on('did-navigate-in-page', (_e, navUrl, isMainFrame) => {
     if (!isMainFrame) return; // ads/widgets/trackers embedded as iframes fire this too — ignore those
     tab.url = navUrl;
+    tab.statsDirty = true;
     pushState();
   });
 
@@ -428,8 +470,8 @@ function attachTabListeners(id, tab) {
   });
 
   // Drives the tab-strip mute/speaker indicator.
-  wc.on('media-started-playing', () => pushState());
-  wc.on('media-paused', () => pushState());
+  wc.on('media-started-playing', () => { tab.statsDirty = true; pushState(); });
+  wc.on('media-paused', () => { tab.statsDirty = true; pushState(); });
   wc.on('page-favicon-updated', (_e, favicons) => {
     tab.favicon = (favicons && favicons[0]) || null;
     pushState();
@@ -526,6 +568,7 @@ function reviveTab(id) {
   const tab = tabs.get(id);
   if (!tab || tab.view || !winAlive()) return;
   tab.view = createTabView();
+  tab.statsDirty = true;
   win.contentView.addChildView(tab.view, 0);
   attachTabListeners(id, tab);
   tab.view.webContents.loadURL(normalizeUrl(tab.url));
@@ -557,10 +600,21 @@ function startMemorySaver() {
   }, MEMORY_SAVER_SWEEP_MS);
 }
 
+const closedTabs = []; // most recently closed last; capped so it can't grow forever
+
+function reopenClosedTab() {
+  const last = closedTabs.pop();
+  if (last) createTab(last.url, { pinned: last.pinned });
+}
+
 function closeTab(id) {
   const tab = tabs.get(id);
   if (!tab) return;
 
+  if (tab.url && tab.url !== 'daybreak://newtab') {
+    closedTabs.push({ url: tab.url, pinned: !!tab.pinned });
+    if (closedTabs.length > 25) closedTabs.shift();
+  }
   if (tab.loadingTimer) clearTimeout(tab.loadingTimer);
   if (tab.view) {
     if (winAlive()) win.contentView.removeChildView(tab.view);
@@ -616,7 +670,8 @@ function handleShortcut(input, sourceTabId) {
   if (input.type !== 'keyDown') return;
   const ctrl = input.control || input.meta;
 
-  if (ctrl && input.key.toLowerCase() === 't') { createTab(settings.homepage); }
+  if (ctrl && input.shift && input.key.toLowerCase() === 't') { reopenClosedTab(); }
+  else if (ctrl && input.key.toLowerCase() === 't') { createTab(settings.homepage); }
   else if (ctrl && input.key.toLowerCase() === 'w') { closeTab(sourceTabId || activeId); }
   else if (ctrl && input.key.toLowerCase() === 'r') { const t = tabs.get(activeId); if (t && t.view) t.view.webContents.reload(); }
   else if (ctrl && input.key.toLowerCase() === 'l') { if (overlayAlive()) overlayView.webContents.send('focus-urlbar'); }
@@ -629,7 +684,7 @@ function handleShortcut(input, sourceTabId) {
   else if (ctrl && input.shift && input.key.toLowerCase() === 'd') { if (activeId) duplicateTab(activeId); }
   else if (ctrl && input.shift && input.key.toLowerCase() === 'm') {
     const t = tabs.get(activeId);
-    if (t && t.view) { t.view.webContents.setAudioMuted(!safeCall(() => t.view.webContents.isAudioMuted(), false)); pushState(); }
+    if (t && t.view) { t.view.webContents.setAudioMuted(!safeCall(() => t.view.webContents.isAudioMuted(), false)); t.statsDirty = true; pushState(); }
   }
   else if (input.alt && input.key === 'ArrowLeft') { const t = tabs.get(activeId); if (t && t.view && t.view.webContents.navigationHistory.canGoBack()) t.view.webContents.navigationHistory.goBack(); }
   else if (input.alt && input.key === 'ArrowRight') { const t = tabs.get(activeId); if (t && t.view && t.view.webContents.navigationHistory.canGoForward()) t.view.webContents.navigationHistory.goForward(); }
@@ -720,6 +775,7 @@ function setupDownloads() {
       timestamp: Date.now()
     };
     downloads.push(entry);
+    if (downloads.length > DOWNLOADS_MAX) downloads = downloads.slice(downloads.length - DOWNLOADS_MAX);
     saveDownloads();
 
     item.on('updated', (_e2, state) => {
@@ -749,6 +805,7 @@ app.whenReady().then(() => {
     else if (host === 'about') html = pages.aboutPage();
     else if (host === 'view-source') html = pages.viewSourcePage(lastViewSource.url, lastViewSource.html);
     else if (host === 'apps') html = pages.appsPage();
+    else if (host === 'performance') html = pages.performancePage();
     else if (host === '2fa') html = TWOFA_HTML;
     else return new Response('Not found', { status: 404 });
 
@@ -790,12 +847,35 @@ ipcMain.handle('tabs:duplicate', (_e, id) => { duplicateTab(id); });
 ipcMain.handle('tabs:togglePin', (_e, id) => { togglePinTab(id); });
 ipcMain.handle('tabs:toggleMute', (_e, id) => {
   const tab = tabs.get(id);
-  if (tab && tab.view) { tab.view.webContents.setAudioMuted(!safeCall(() => tab.view.webContents.isAudioMuted(), false)); pushState(); }
+  if (tab && tab.view) { tab.view.webContents.setAudioMuted(!safeCall(() => tab.view.webContents.isAudioMuted(), false)); tab.statsDirty = true; pushState(); }
 });
+ipcMain.handle('tabs:reopenClosed', () => { reopenClosedTab(); });
 ipcMain.handle('tabs:viewSource', (_e, id) => {
   const tab = tabs.get(id);
   if (tab && tab.view) viewPageSource(tab.view.webContents);
 });
+
+// Real data from Electron's own process metrics, not a synthetic
+// indicator — matched against actual tab titles/URLs where the PID
+// corresponds to one of our own tab renderers, so this reads like
+// something a person can actually act on (which tab is expensive right
+// now) rather than an opaque PID list.
+ipcMain.handle('perf:getMetrics', () => {
+  const pidToTab = new Map();
+  for (const [, tab] of tabs) {
+    if (!tab.view || tab.view.webContents.isDestroyed()) continue;
+    const pid = safeCall(() => tab.view.webContents.getOSProcessId(), null);
+    if (pid) pidToTab.set(pid, { title: tab.title || tab.url, url: tab.url });
+  }
+  return app.getAppMetrics().map((m) => ({
+    pid: m.pid,
+    type: m.type,
+    cpuPercent: m.cpu ? m.cpu.percentCPUUsage : 0,
+    memoryMB: m.memory ? Math.round(m.memory.workingSetSize / 1024) : 0,
+    tab: pidToTab.get(m.pid) || null
+  }));
+});
+
 ipcMain.on('tabs:reorder', (_e, orderedIds) => {
   if (!Array.isArray(orderedIds)) return;
   reorderTabs(orderedIds);

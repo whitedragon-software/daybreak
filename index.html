@@ -298,6 +298,7 @@
 
   <div id="menuDropdown" class="floating-menu">
     <div class="menu-item" id="menuNewTab"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span><span class="mi-label">New tab</span><span class="mi-shortcut">Ctrl+T</span></div>
+    <div class="menu-item" id="menuReopen"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.6 5.9"/><polyline points="4 5 4 10 9 10"/></svg></span><span class="mi-label">Reopen closed tab</span><span class="mi-shortcut">Ctrl+Shift+T</span></div>
     <div class="menu-divider"></div>
     <div class="menu-item" id="menuBookmarks"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 3 14.9 9.3 21.8 10 16.5 14.6 18 21.4 12 17.8 6 21.4 7.5 14.6 2.2 10 9.1 9.3"/></svg></span><span class="mi-label">Bookmarks</span></div>
     <div class="menu-item" id="menuHistory"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><polyline points="12 7.5 12 12 15.5 14"/></svg></span><span class="mi-label">History</span></div>
@@ -314,6 +315,7 @@
     <div class="menu-item" id="menuSettings"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="11" cy="17" r="2"/></svg></span><span class="mi-label">Settings</span></div>
     <div class="menu-item" id="menuToggleBar"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="3.5" rx="1"/><rect x="3.5" y="10.5" width="17" height="9" rx="1"/></svg></span><span class="mi-label">Show bookmarks bar</span><span class="mi-shortcut" id="menuBarCheck"></span></div>
     <div class="menu-divider"></div>
+    <div class="menu-item" id="menuPerformance"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 13 7 13 10 5 14 19 17 11 21 11"/></svg></span><span class="mi-label">Performance</span></div>
     <div class="menu-item" id="menuAbout"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><line x1="12" y1="16" x2="12" y2="11"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg></span><span class="mi-label">About Daybreak</span></div>
   </div>
 
@@ -754,6 +756,8 @@
   document.getElementById('menuHistory').addEventListener('click', function () { window.api.createTab('daybreak://history'); closeAllMenus(); });
   document.getElementById('menuDownloads').addEventListener('click', function () { window.api.createTab('daybreak://downloads'); closeAllMenus(); });
   document.getElementById('menuApps').addEventListener('click', function () { window.api.createTab('daybreak://apps'); closeAllMenus(); });
+  document.getElementById('menuPerformance').addEventListener('click', function () { window.api.createTab('daybreak://performance'); closeAllMenus(); });
+  document.getElementById('menuReopen').addEventListener('click', function () { window.api.reopenClosedTab(); closeAllMenus(); });
   document.getElementById('menuSettings').addEventListener('click', function () { window.api.createTab('daybreak://settings'); closeAllMenus(); });
   document.getElementById('menuAbout').addEventListener('click', function () { window.api.createTab('daybreak://about'); closeAllMenus(); });
   document.getElementById('menuFind').addEventListener('click', function () { openFindBar(); closeAllMenus(); });

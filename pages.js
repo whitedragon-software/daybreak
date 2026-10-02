@@ -307,7 +307,7 @@ function settingsPage() {
     function load() {
       window.internalAPI.getSettings().then(function (s) {
         document.getElementById('adBlockEnabled').checked = s.adBlockEnabled !== false;
-        document.getElementById('memorySaverEnabled').checked = s.memorySaverEnabled !== false;
+        document.getElementById('memorySaverEnabled').checked = s.memorySaverEnabled === true;
         document.getElementById('homepage').value = s.homepage || 'daybreak://newtab';
         document.getElementById('searchEngine').value = s.searchEngine || 'google';
         document.getElementById('showBookmarksBar').checked = !!s.showBookmarksBar;
@@ -431,7 +431,7 @@ const APPS = [
     name: 'Authenticator',
     mark: '2F',
     description: 'Local two-factor authentication codes. Everything stays on this device.',
-    url: 'daybreak://2fa'
+    url: 'daybreak://2FA'
   }
 ];
 
@@ -456,4 +456,65 @@ function appsPage() {
   return shell('Apps', body, '');
 }
 
-module.exports = { newTabPage, bookmarksPage, historyPage, settingsPage, downloadsPage, aboutPage, viewSourcePage, appsPage, APPS };
+// Live process metrics straight from Electron (app.getAppMetrics), matched
+// to real tab titles where a process is one of our own tab renderers. Built
+// with DOM APIs / textContent rather than innerHTML on purpose: tab titles
+// and URLs are page-controlled strings, so they must never be parsed as
+// markup.
+function performancePage() {
+  const body = `
+    <h1>Performance</h1>
+    <p style="color:var(--text-dim);font-size:12px;margin:-10px 0 16px">
+      Live resource use for every Daybreak process, measured by Electron itself. Updates every two seconds.
+    </p>
+    <div id="summary" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></div>
+    <div id="rows"></div>
+  `;
+  const script = `
+    function labelFor(m) {
+      if (m.tab) return { title: m.tab.title || m.tab.url, sub: m.tab.url };
+      var names = { Browser: "Main process", GPU: "GPU process", Utility: "Utility process", Tab: "Renderer (Daybreak UI or internal page)" };
+      return { title: names[m.type] || m.type, sub: "" };
+    }
+    function refresh() {
+      window.internalAPI.getMetrics().then(function (list) {
+        list.sort(function (a, b) { return b.memoryMB - a.memoryMB; });
+        var total = list.reduce(function (s, m) { return s + m.memoryMB; }, 0);
+        var cpuTotal = list.reduce(function (s, m) { return s + m.cpuPercent; }, 0);
+        document.getElementById("summary").textContent =
+          list.length + " processes  \\u00b7  " + total + " MB total  \\u00b7  " + cpuTotal.toFixed(1) + "% CPU";
+        var el = document.getElementById("rows");
+        el.textContent = "";
+        list.forEach(function (m) {
+          var lbl = labelFor(m);
+          var row = document.createElement("div");
+          row.className = "row";
+          var main = document.createElement("div");
+          main.className = "main";
+          var t = document.createElement("div");
+          t.className = "title";
+          t.textContent = lbl.title;
+          main.appendChild(t);
+          if (lbl.sub) {
+            var u = document.createElement("div");
+            u.className = "url";
+            u.textContent = lbl.sub;
+            main.appendChild(u);
+          }
+          var meta = document.createElement("span");
+          meta.className = "meta";
+          meta.style.whiteSpace = "nowrap";
+          meta.textContent = m.memoryMB + " MB  \\u00b7  " + m.cpuPercent.toFixed(1) + "% CPU  \\u00b7  PID " + m.pid;
+          row.appendChild(main);
+          row.appendChild(meta);
+          el.appendChild(row);
+        });
+      });
+    }
+    refresh();
+    setInterval(refresh, 2000);
+  `;
+  return shell('Performance', body, script);
+}
+
+module.exports = { newTabPage, bookmarksPage, historyPage, settingsPage, downloadsPage, aboutPage, viewSourcePage, appsPage, performancePage, APPS };

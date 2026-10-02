@@ -20,6 +20,8 @@ if (window.location.protocol === 'daybreak:') {
     getDownloads: () => ipcRenderer.invoke('downloads:list'),
     openDownload: (id) => ipcRenderer.invoke('downloads:open', id),
     showDownloadInFolder: (id) => ipcRenderer.invoke('downloads:showInFolder', id),
-    clearDownloads: () => ipcRenderer.invoke('downloads:clear')
+    clearDownloads: () => ipcRenderer.invoke('downloads:clear'),
+
+    getMetrics: () => ipcRenderer.invoke('perf:getMetrics')
   });
 }

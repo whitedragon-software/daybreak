@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   togglePinTab: (id) => ipcRenderer.invoke('tabs:togglePin', id),
   toggleMuteTab: (id) => ipcRenderer.invoke('tabs:toggleMute', id),
   viewSource: (id) => ipcRenderer.invoke('tabs:viewSource', id),
+  reopenClosedTab: () => ipcRenderer.invoke('tabs:reopenClosed'),
   reorderTabs: (orderedIds) => ipcRenderer.send('tabs:reorder', orderedIds),
 
   // navigation

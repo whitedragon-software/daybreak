@@ -111,6 +111,12 @@
   .ring.warn .bar{stroke:var(--danger); transition:none}
   .ring b{position:absolute; inset:0; display:grid; place-items:center; font-size:12px; font-weight:600; color:var(--muted); font-family:Menlo,Consolas,ui-monospace,monospace}
   .ring.warn b{color:var(--danger)}
+  .edit{
+    width:40px; height:40px; border-radius:5px; border:1px solid transparent; background:transparent; color:var(--muted);
+    display:grid; place-items:center; transition:border-color .15s ease, color .15s ease;
+  }
+  .edit:hover{border-color:var(--accent); color:var(--accent)}
+  .edit svg{width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round}
   .del{
     width:40px; height:40px; border-radius:5px; border:1px solid transparent; background:transparent; color:var(--muted);
     display:grid; place-items:center; transition:border-color .15s ease, color .15s ease;
@@ -239,6 +245,7 @@
     .ring{width:34px; height:34px}
     .ring svg{width:34px; height:34px}
     .del{width:34px; height:34px}
+    .edit{width:34px; height:34px}
     .fab{width:52px; height:52px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom))}
     .fab svg{width:20px; height:20px}
     .empty{padding:48px 16px 24px}
@@ -251,6 +258,19 @@
   }
   @media (prefers-reduced-motion:reduce){ *{transition:none !important} }
 </style>
+<script>
+(function(){
+  try{
+    var s = JSON.parse(localStorage.getItem('pure2fa.settings.v1') || 'null');
+    var t = s && s.theme;
+    var out;
+    if (t === 'light' || t === 'dark') out = t;
+    else if (t === 'system') out = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    else out = 'dark';
+    document.documentElement.setAttribute('data-theme', out);
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
 <div class="app">
@@ -285,7 +305,7 @@
 <div class="scrim" id="m-add" onclick="scrimClose(event,'m-add')">
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Add account">
     <div class="hd">
-      <h3>Add account</h3>
+      <h3 id="add-modal-title">Add account</h3>
       <button class="iconbtn" onclick="closeModal('m-add')" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="body">
@@ -496,6 +516,7 @@ var pendingConfirm = null;
 var activeCategory = '';
 var dragEl = null;
 var lockData = null;
+var editingId = null;
 
 /* ---------------- storage ---------------- */
 function loadAll(){
@@ -958,6 +979,8 @@ function openModal(id){ document.getElementById(id).className = 'scrim open'; }
 function closeModal(id){ document.getElementById(id).className = 'scrim'; if (id === 'm-add') stopScanCamera(); }
 function scrimClose(ev, id){ if (ev.target && ev.target.id === id){ if (id === 'm-cf') confirmNo(); else closeModal(id); } }
 function openAdd(){
+  editingId = null;
+  document.getElementById('add-modal-title').textContent = 'Add account';
   ['f-secret','f-issuer','f-label','f-category'].forEach(function(i){ document.getElementById(i).value = ''; });
   document.getElementById('f-digits').value = '6';
   document.getElementById('f-period').value = '30';
@@ -966,6 +989,25 @@ function openAdd(){
   populateCategoryList();
   openModal('m-add');
   setTimeout(function(){ document.getElementById('f-secret').focus(); }, 30);
+}
+function openEdit(id, ev){
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  var a = null;
+  for (var i=0;i<accounts.length;i++){ if (accounts[i].id === id) a = accounts[i]; }
+  if (!a) return;
+  editingId = id;
+  document.getElementById('add-modal-title').textContent = 'Edit account';
+  document.getElementById('f-secret').value = a.secret;
+  document.getElementById('f-issuer').value = a.issuer || '';
+  document.getElementById('f-label').value = a.label || '';
+  document.getElementById('f-category').value = a.category || '';
+  document.getElementById('f-digits').value = String(a.digits || 6);
+  document.getElementById('f-period').value = String(a.period || 30);
+  document.getElementById('add-err').textContent = '';
+  populateCategoryList();
+  previewTile();
+  openModal('m-add');
+  setTimeout(function(){ document.getElementById('f-issuer').focus(); }, 30);
 }
 function populateCategoryList(){
   var cats = {};
@@ -1044,11 +1086,29 @@ function saveAccount(){
   catch(e){ err.textContent = 'That key is not valid Base32 (A–Z and 2–7 only).'; return; }
   if (!issuer && !label){ err.textContent = 'Add a service or account name.'; return; }
   var category = document.getElementById('f-category').value.trim();
+  var digits = parseInt(document.getElementById('f-digits').value, 10) || 6;
+  var period = parseInt(document.getElementById('f-period').value, 10) || 30;
+  var cleanSecret = secret.toUpperCase().replace(/[\s\-_]/g,'');
+  if (editingId){
+    var existing = null;
+    for (var i=0;i<accounts.length;i++){ if (accounts[i].id === editingId) existing = accounts[i]; }
+    if (!existing){ err.textContent = 'That account no longer exists.'; return; }
+    existing.issuer = issuer || label;
+    existing.label = issuer ? label : '';
+    existing.secret = cleanSecret;
+    existing.digits = digits;
+    existing.period = period;
+    existing.category = category;
+    delete codeCache[existing.id];
+    editingId = null;
+    saveAccounts(); closeModal('m-add'); render(); tick();
+    toast('Account updated');
+    return;
+  }
   accounts.push({
     id: uid(), issuer: issuer || label, label: issuer ? label : '',
-    secret: secret.toUpperCase().replace(/[\s\-_]/g,''),
-    digits: parseInt(document.getElementById('f-digits').value, 10) || 6,
-    period: parseInt(document.getElementById('f-period').value, 10) || 30,
+    secret: cleanSecret,
+    digits: digits, period: period,
     category: category, added: Date.now()
   });
   saveAccounts(); closeModal('m-add'); render(); tick();
@@ -1076,22 +1136,6 @@ function wipeAll(){
     toast('All accounts deleted');
   });
 }
-function addDemo(){
-  var demo = [
-    ['GitHub','whitedragon','JBSWY3DPEHPK3PXP','Dev'],
-    ['Proton Mail','whitedragon303@proton.me','KRSXG5CTMVRXEZLU','Personal'],
-    ['Google','whitedragon303@gmail.com','MFRGGZDFMZTWQ2LK','Personal'],
-    ['Amazon','whitedragon','JBSWY3DPEHPK3PXQ','Shopping'],
-    ['Discord','whitedragon#3030','GEZDGNBVGY3TQOJQ','Social'],
-    ['Microsoft','whitedragon@outlook.com','KRSXG5CTMVRXEZLV','Work']
-  ];
-  for (var i=0;i<demo.length;i++){
-    accounts.push({ id:uid(), issuer:demo[i][0], label:demo[i][1], secret:demo[i][2], category:demo[i][3], digits:6, period:30, added:Date.now()+i });
-  }
-  saveAccounts(); render(); tick();
-  toast('Demo accounts added');
-}
-
 /* ---------------- copy ---------------- */
 function copyCode(id){
   if (settings.hide && !revealed[id]){ revealed[id] = true; render(); return; }
@@ -1326,7 +1370,6 @@ function render(){
         '<p>Add a setup key from any service that supports authenticator apps. Everything stays on this device.</p>' +
         '<div class="row">' +
           '<button class="btn primary" onclick="openAdd()">Add account</button>' +
-          '<button class="btn" onclick="addDemo()">Load demo accounts</button>' +
         '</div>' +
       '</div>';
     return;
@@ -1379,6 +1422,9 @@ function render(){
         '</div>';
     }
     html +=
+        '<button class="edit" title="Edit account" aria-label="Edit ' + esc(a.issuer || a.label) + '" onclick="openEdit(\'' + a.id + '\', event)">' +
+          '<svg viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>' +
+        '</button>' +
         '<button class="del" title="Delete account" aria-label="Delete ' + esc(a.issuer || a.label) + '" onclick="deleteAccount(\'' + a.id + '\', event)">' +
           '<svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.2 7V4.9h5.6V7"/><path d="M6.2 7l.9 12.1h9.8L17.8 7"/><path d="M10.2 10.8v5.4M13.8 10.8v5.4"/></svg>' +
         '</button></div></div>';
