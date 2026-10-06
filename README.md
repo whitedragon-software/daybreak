@@ -1,7 +1,5 @@
 # Daybreak
 
-Developer: WhiteDragon-dev
-
 A minimal multi-tab desktop browser built on Electron's BaseWindow and
 WebContentsView APIs — a frameless window with a custom tab strip and
 address bar, real per-tab browsing contexts (not iframes), and a small set
