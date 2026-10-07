@@ -403,8 +403,9 @@ function aboutPage() {
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
         <a href="https://whitedragon.software" target="_blank" style="color:var(--accent);text-decoration:none">whitedragon.software</a>
-        &nbsp;&middot;&nbsp;
-        <a href="https://github.com/whitedragon-software/daybreak" target="_blank" style="color:var(--accent);text-decoration:none">github.com/whitedragon-software/daybreak</a>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
+        Source code: <a href="https://github.com/whitedragon-software/daybreak" target="_blank" style="color:var(--accent);text-decoration:none">github.com/whitedragon-software/daybreak</a>
       </div>
     </div>
   `;

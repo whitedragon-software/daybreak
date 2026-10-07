@@ -1,9 +1,9 @@
 {
   "name": "daybreak",
   "productName": "Daybreak",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Daybreak — a minimal multi-tab Electron browser shell using BaseWindow + WebContentsView.",
-  "author": "WhiteDragon-dev",
+  "author": "WhiteDragon-software",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -12,7 +12,7 @@
     "dist": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^44.5.1",
+    "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
   },
   "build": {
