@@ -3,6 +3,7 @@
 ## 1.1.0
 
 ### Added
+- Added the Daybreak logo.
 - Performance page at `daybreak://performance`: live CPU and memory use for
   every Daybreak process, read from Electron's own process metrics. Processes
   that belong to a tab are labelled with that tab's title and URL.
