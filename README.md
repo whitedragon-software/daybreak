@@ -3,8 +3,9 @@
 A minimal multi-tab desktop browser built on Electron's BaseWindow and
 WebContentsView APIs — a frameless window with a custom tab strip and
 address bar, real per-tab browsing contexts (not iframes), and a small set
-of internal pages (bookmarks, history, downloads, settings, about) served
-from a genuine registered `daybreak://` protocol.
+of internal pages (bookmarks, history, downloads, settings, apps,
+performance, about) served from a genuine registered `daybreak://`
+protocol.
 
 ---
 
@@ -17,11 +18,12 @@ from a genuine registered `daybreak://` protocol.
 - `tab-preload.js` — restricted context-bridge exposed only to internal
   `daybreak://` pages (`window.internalAPI`); regular websites never see it
 - `pages.js` — HTML generators for the internal pages: new tab, bookmarks,
-  history, downloads, settings, about, apps
+  history, downloads, settings, about, apps, performance, view source
 - `index.html` — the overlay UI itself: tab strip, address bar, menus,
   find bar
 - `2FA.html` — a self-contained bundled app (local TOTP authenticator),
-  served as-is at `daybreak://2fa`; the first entry in the Apps hub
+  served as-is at `daybreak://2FA`; the first entry in the Apps hub
+- `CHANGELOG.md` — version history
 
 ---
 
@@ -73,8 +75,8 @@ mechanism available to build a custom set of edge/corner handles.
 ### Internal pages
 
 `daybreak://` is registered as a real, privileged scheme (`newtab`,
-`bookmarks`, `history`, `downloads`, `settings`, `about`, `apps`), handled
-by `protocol.handle` in the main process — the same mechanism a browser
+`bookmarks`, `history`, `downloads`, `settings`, `about`, `apps`,
+`performance`, `view-source`, `2FA`), handled by `protocol.handle` in the main process — the same mechanism a browser
 would use for its own `chrome://`-style pages, not a special-cased string
 inside a tab. Each tab's `WebContentsView` loads `tab-preload.js`, which
 only exposes `window.internalAPI` when `location.protocol === 'daybreak:'`
@@ -91,6 +93,15 @@ pages, an app is typically its own complete static HTML file (like
 persistence, served as-is rather than templated through `shell()`. The
 hub is reachable from the new tab page and from the main menu.
 
+### Tabs
+
+Tabs can be created, switched, closed, duplicated, pinned, muted, and
+dragged to reorder (pinned and unpinned tabs stay in separate groups).
+When there are more tabs than fit, the tab strip scrolls horizontally with
+the mouse wheel, and the active tab is scrolled into view whenever it
+changes. The last 25 closed tabs are remembered and can be reopened with
+`Ctrl+Shift+T`.
+
 ### State updates
 
 Every tab reports loading state, title, and navigation changes back to
@@ -101,18 +112,38 @@ into at most one update roughly every 16ms rather than sending one
 message per raw event, and the overlay only rebuilds a given tab's DOM
 element when that specific tab's own visible fields actually changed.
 History and downloads records are saved to disk on a similar debounce,
-rather than a synchronous write per event.
+rather than a synchronous write per event, and are capped at 5000 and 500
+entries respectively. Each tab's navigation and audio state (the values
+that need a call into the native `WebContents` binding) is cached and only
+re-queried when a navigation, media, or mute event for that tab occurs,
+rather than for every tab on every update.
+
+### Memory Saver
+
+Off by default; turn it on in Settings. When enabled, a background tab
+that has been idle for 20 minutes is discarded: its view is destroyed to
+free its process, while its title, URL, and place in the tab strip are
+kept. It reloads automatically when you switch back to it. The active tab,
+pinned tabs, and tabs currently playing audio are never discarded.
+
+### Performance page
+
+`daybreak://performance` lists every Daybreak process with its memory and
+CPU use, read from Electron's `app.getAppMetrics()`. Processes that belong
+to a tab are labelled with that tab's title and URL. GPU rasterization and
+zero-copy are enabled at startup. No benchmark numbers are claimed here;
+measure on your own hardware.
 
 ### Ad blocking
 
 Network-level blocking runs through `session.defaultSession.webRequest`,
 matching request hostnames against a curated list of ad and tracking
-domains, toggleable from Settings. This covers most third-party ad and
-tracking *requests* — but a request-blocklist alone does not stop a page
-from opening an entirely new, uncontrolled window via `window.open()`,
-which is a separate code path.
-
----
+domains, toggleable from Settings. A request blocklist alone does not stop
+a page from opening a new window via `window.open()`, which is a separate
+code path, so each tab also has a `setWindowOpenHandler`: known ad hosts
+are denied, and any other `window.open()` opens as a normal Daybreak tab
+instead of a separate native window. A small set of CSS rules also hides
+common ad containers.
 
 ---
 
@@ -129,17 +160,20 @@ npm run dist         # packaged installer for the current platform
 key, targeting NSIS on Windows, a DMG on macOS, and an AppImage on Linux —
 it builds for whichever platform you run it on, into `dist/`.
 
+The app icon is read from the `build/` folder. electron-builder needs a
+PNG (at least 256x256, named `icon.png`) or an `icon.ico`; an SVG is not
+used for the installer or executable icon.
+
 ---
 
 ## Known limitations
 
 - Resizing depends on the operating system's native frameless-resize
   behavior rather than anything this app controls directly.
-- The ad blocker is a hostname-matching request blocker plus (as of the
-  next revision) a popup/new-window filter — it does not do full-page
-  cosmetic filtering the way a dedicated extension would, so ad content
-  served from a page's own first-party domain, rather than a separate
-  blockable host, can still get through.
+- The ad blocker is a hostname-matching request blocker with popup
+  handling and a small cosmetic rule set. It is not a full filter-list
+  engine, so ads served from a page's own first-party domain can still get
+  through.
 - No multi-window support — a tab cannot currently be dragged out into
   its own separate window.
 - No separate browsing profiles or incognito mode.
@@ -167,6 +201,12 @@ layer, so a failure narrows down where to look.
 | 10 | Toggle the ad blocker off, then on, on a page with ads | Ad blocking | Visible difference in blocked network requests; setting persists across restart. |
 | 11 | Trigger a page that opens a popup ad | Popup handling | No separate ad window appears. |
 | 12 | Drag a tab left/right within its group (pinned or unpinned) | Tab reordering | Tab reorders live during the drag; order persists after dropping. |
+| 13 | Open more tabs than fit in the tab strip, then scroll the wheel over it | Tab overflow | The strip scrolls horizontally, and a newly opened tab is scrolled into view. |
+| 14 | Press `Ctrl+F`, type a word, then press Enter repeatedly | Find in page | Matches highlight as you type; Enter and Next move through the matches. |
+| 15 | Close a tab, then press `Ctrl+Shift+T` | Reopen closed tab | The closed tab comes back at its last URL. |
+| 16 | Turn on Memory Saver, leave a background tab idle for 20 minutes, then click it | Memory Saver | The tab reloads on click and keeps its title and position in the strip. |
+| 17 | Open `daybreak://performance` | Process metrics | Each process lists memory and CPU use, and tab processes show the tab's title. |
+| 18 | Open the Apps hub, then the Authenticator at `daybreak://2FA` | Bundled app | The hub lists the Authenticator and it opens and works offline. |
 
 ---
 
@@ -178,8 +218,11 @@ main.js
 │                             settings.json in Electron's userData folder
 ├─ layout()                 → overlay + active tab view bounds, per window resize
 ├─ createTab / closeTab     → tab lifecycle, pinning, duplication, reordering
+├─ attachTabListeners()     → per-tab events, popup handling, favicons, audio
+├─ discardTab / reviveTab   → opt-in Memory Saver
 ├─ setupAdBlocker()         → webRequest-based hostname blocking
 ├─ buildPageContextMenu()   → native right-click menu for page content
 ├─ protocol.handle()        → serves the daybreak:// internal pages
 └─ ipcMain handlers         → tabs, navigation, window controls, drag,
-                              bookmarks, history, downloads, settings
+                              bookmarks, history, downloads, settings,
+                              find, zoom, process metrics
