@@ -18,11 +18,27 @@ if (window.location.protocol === 'daybreak:') {
   contextBridge.exposeInMainWorld('internalAPI', {
     getBookmarks: () => ipcRenderer.invoke('bookmarks:list'),
     addBookmark: (url, title) => ipcRenderer.invoke('bookmarks:add', { url, title }),
+    updateBookmark: (id, patch) => ipcRenderer.invoke('bookmarks:update', { id, patch }),
     removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', id),
 
     getHistory: () => ipcRenderer.invoke('history:list'),
     removeHistory: (id) => ipcRenderer.invoke('history:remove', id),
     clearHistory: () => ipcRenderer.invoke('history:clear'),
+
+    // Export/import for bookmarks and history (.json). The file path is
+    // NEVER passed here from the page — the main process owns the native
+    // save/open dialogs; the page only picks the data kind.
+    exportData: (kind) => ipcRenderer.invoke('data:export', kind),
+    importData: (kind) => ipcRenderer.invoke('data:import', kind),
+
+    // New Tab "Frequently visited" tile preferences (see the tiles IPC
+    // section in main.js): hide/restore tiles on the grid, persist a drag
+    // order, and open a URL as a tab of the sender's own window — the
+    // tiles' middle-click / Ctrl+click behavior, same as the bookmark chips.
+    hideTile: (url) => ipcRenderer.invoke('tiles:hide', url),
+    restoreTiles: () => ipcRenderer.invoke('tiles:restore'),
+    setTileOrder: (urls) => ipcRenderer.invoke('tiles:order', urls),
+    openInTab: (url, opts) => ipcRenderer.invoke('tabs:create', url, opts || {}),
 
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setSettings: (partial) => ipcRenderer.invoke('settings:set', partial),

@@ -25,6 +25,13 @@
   - Certificate failures get a "Your connection is not private" page with a Details section and an explicit "Proceed to … (unsafe)" action. Exceptions are bound to the exact host + certificate fingerprint that was actually denied, kept in memory for the current run only, and never granted for sub-frames. TLS protocol errors offer no bypass, like Chrome.
   - A crashed renderer shows an "Aw, Snap!" page (with the crash reason) and a working Reload; loading the page relaunches the renderer.
 - Dropdown menus now close when you click the page, like Chrome: every tab relays a bare mousedown through `tab-preload.js` and main.js back to its window's toolbar, so clicking away no longer leaves a menu open with a dead strip of overlay over the page.
+- Export and import for Bookmarks and History as plain, versioned `.json` files. "Export JSON" / "Import JSON" on `daybreak://bookmarks` and `daybreak://history` open native save/open dialogs; imports are merges (duplicates are skipped, nothing is deleted or overwritten), rows without a usable http(s) URL are skipped rather than imported as dead entries, and the renderer never names file paths — the main process owns the dialogs and all disk access.
+- The New Tab page's "Frequently visited" tiles are now managed like the bookmarks bar:
+  - Left click opens the site in the current tab; middle click or Ctrl/Cmd+click opens it in a new background tab.
+  - Right-click menu on every tile: Open, Open in background tab, Edit tile…, Hide from New Tab.
+  - Edit tile… follows the same conventions as the bookmark editor (address-bar URL resolution, an emptied name falls back to the URL) and updates the underlying bookmark, so the bar and star state stay in sync.
+  - Hiding a tile is reversible and non-destructive: the bookmark is kept, and a "Show hidden tiles (N)" control on the New Tab page restores them.
+  - Tiles can be dragged to reorder the grid; the order persists in `settings.json` and never affects bookmarks-bar order. Tile preferences are keyed by URL, pruned when the bookmark is removed, and carried over when its URL is edited.
 
 ### Changed
 - Private browsing was first built per-tab during development, then replaced by the window-level model above: a per-tab privacy flag was found to leak state between private and normal tabs, and window-level privacy removes the leak by construction.

@@ -95,6 +95,25 @@ const BASE_STYLE = `
   }
   .app-card-name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
   .app-card-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  button.secondary {
+    padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  button.secondary:hover { background: var(--hover); }
+  .ctx-menu {
+    position: fixed; z-index: 60; min-width: 190px; padding: 4px 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.16);
+  }
+  .ctx-item { padding: 7px 14px; font-size: 12.5px; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .ctx-item:hover { background: var(--hover); }
+  #toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(8px);
+    max-width: 80%; padding: 9px 16px; border-radius: 8px; background: var(--text); color: var(--bg);
+    font-size: 12.5px; opacity: 0; pointer-events: none; z-index: 70;
+    transition: opacity .18s ease, transform .18s ease; word-break: break-all;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 `;
 
 // Shared helper injected into EVERY internal page's <script> block, ahead
@@ -112,6 +131,16 @@ const SCRIPT_COMMON = `
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  var _toastTimer = null;
+  function showToast(msg) {
+    var t = document.getElementById('toast');
+    if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+    t.textContent = String(msg == null ? '' : msg);
+    t.classList.add('show');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3500);
+  }
+  function basename(p) { return String(p == null ? '' : p).split(/[\\\\/]/).pop(); }
 `;
 
 // Applied first in every internal page so the overlay's theme choice carries
@@ -139,6 +168,7 @@ function shell(title, bodyHtml, script) {
 <div class="wrap">
 ${bodyHtml}
 </div>
+<div id="toast"></div>
 <script>${SCRIPT_COMMON}
 ${THEME_INIT}
 ${script}</script>
@@ -182,6 +212,24 @@ function newTabPage() {
         <div id="tilesLabel" style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;
              margin:0 0 10px 2px;display:none">Frequently visited</div>
         <div id="tiles"></div>
+        <div id="restoreRow" style="display:none;margin-top:10px">
+          <button class="icon-btn" id="restoreBtn" style="border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-size:11px"></button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tileMenu" class="ctx-menu" style="display:none"></div>
+    <div id="tileEditor" style="position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:50">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:18px;width:340px;max-width:90vw;box-shadow:0 10px 34px rgba(0,0,0,.22)">
+        <div style="font-size:13.5px;font-weight:600;margin-bottom:12px">Edit tile</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Name</div>
+        <input type="text" id="editName" style="width:100%;margin-bottom:10px" placeholder="Falls back to the URL when empty">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">URL</div>
+        <input type="text" id="editUrl" style="width:100%;margin-bottom:14px">
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <button class="secondary" id="editCancel">Cancel</button>
+          <button class="action" id="editSave">Save</button>
+        </div>
       </div>
     </div>
   `;
@@ -217,7 +265,7 @@ function newTabPage() {
       for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
       return h;
     }
-    function tile(url, title, favicon) {
+    function tile(url, title, favicon, id) {
       var host = '';
       try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { host = url; }
       var letter = (host[0] || '?').toUpperCase();
@@ -231,8 +279,9 @@ function newTabPage() {
         ? '<img src="' + escapeHtml(favicon) + '" alt="" style="width:30px;height:30px;flex-shrink:0;border-radius:7px;object-fit:cover" onerror="this.remove()">'
         : '<div style="width:30px;height:30px;flex-shrink:0;border-radius:7px;display:flex;align-items:center;justify-content:center;' +
             'background:hsl(' + hue + ',55%,45%);color:#fff;font-size:13px;font-weight:600">' + safeLetter + '</div>';
-      return '<a href="' + safeUrl + '" style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:10px;' +
-        'padding:11px 12px;border-radius:9px;border:1px solid var(--border);background:var(--panel);' +
+      return '<a href="' + safeUrl + '" data-url="' + safeUrl + '" data-id="' + escapeHtml(id || '') + '" draggable="true" ' +
+        'style="text-decoration:none;color:inherit;display:flex;align-items:center;gap:10px;' +
+        'padding:11px 12px;border-radius:9px;border:1px solid var(--border);background:var(--panel);cursor:pointer;' +
         'transition:border-color .12s ease,transform .12s ease" ' +
         'onmouseover="this.style.borderColor=\\'var(--accent)\\';this.style.transform=\\'translateY(-1px)\\'" ' +
         'onmouseout="this.style.borderColor=\\'var(--border)\\';this.style.transform=\\'none\\'">' +
@@ -240,13 +289,197 @@ function newTabPage() {
         '<div style="min-width:0"><div style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + safeTitle + '</div>' +
         '<div style="font-size:10px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + safeHost + '</div></div></a>';
     }
-    window.internalAPI.getBookmarks().then(function (list) {
+    // ---- Frequently visited tiles ----
+    // The grid is a managed view of the bookmarks list: the newest 9
+    // bookmarks become tiles, minus the ones the user hid, in the order the
+    // user dragged them (tileOrder in settings.json). Interactions mirror
+    // the bookmarks bar chips: left click opens the site in this tab,
+    // middle click / Ctrl+click open a background tab, right click opens a
+    // tile menu, and dragging reorders the grid. Hiding never deletes the
+    // bookmark itself — "Show hidden tiles" brings everything back, which
+    // is the same contract Chrome offers for its most-visited tiles.
+    var tileData = { bookmarks: [], settings: {} };
+    var dragEl = null;
+
+    function tileList() {
+      var s = tileData.settings || {};
+      var hidden = {};
+      (s.hiddenTiles || []).forEach(function (u) { hidden[u] = true; });
+      var picked = tileData.bookmarks.filter(function (b) { return !hidden[b.url]; }).slice(-9).reverse();
+      var pos = {};
+      (s.tileOrder || []).forEach(function (u, i) { if (pos[u] === undefined) pos[u] = i; });
+      picked.sort(function (a, b) {
+        var ia = pos[a.url] === undefined ? 9999 : pos[a.url];
+        var ib = pos[b.url] === undefined ? 9999 : pos[b.url];
+        return ia - ib; // Array.sort is stable: equal ranks keep newest-first
+      });
+      return picked;
+    }
+
+    function refreshTiles() {
+      return Promise.all([window.internalAPI.getBookmarks(), window.internalAPI.getSettings()]).then(function (res) {
+        tileData.bookmarks = Array.isArray(res[0]) ? res[0] : [];
+        tileData.settings = res[1] || {};
+        renderTiles();
+      });
+    }
+
+    function renderTiles() {
       var el = document.getElementById('tiles');
-      if (!list.length) return;
-      document.getElementById('tilesLabel').style.display = 'block';
-      el.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">' +
-        list.slice(-9).reverse().map(function (b) { return tile(b.url, b.title, b.favicon); }).join('') + '</div>';
+      var label = document.getElementById('tilesLabel');
+      var restoreRow = document.getElementById('restoreRow');
+      var picked = tileList();
+      var hiddenCount = ((tileData.settings || {}).hiddenTiles || []).length;
+      restoreRow.style.display = tileData.bookmarks.length && hiddenCount ? 'block' : 'none';
+      if (hiddenCount) document.getElementById('restoreBtn').textContent = 'Show ' + hiddenCount + ' hidden tile' + (hiddenCount === 1 ? '' : 's');
+      if (!tileData.bookmarks.length) { label.style.display = 'none'; el.innerHTML = ''; return; }
+      label.style.display = 'block';
+      if (!picked.length) {
+        el.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:4px 2px">All bookmark tiles are hidden. Use "Show hidden tiles" below to bring them back.</div>';
+        return;
+      }
+      el.innerHTML = '<div id="tilesGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">' +
+        picked.map(function (b) { return tile(b.url, b.title, b.favicon, b.id); }).join('') + '</div>';
+      wireTiles();
+    }
+
+    function wireTiles() {
+      var grid = document.getElementById('tilesGrid');
+      if (!grid) return;
+      grid.querySelectorAll('a[data-url]').forEach(function (t) {
+        var url = t.getAttribute('data-url');
+        // Middle click and Ctrl/Cmd+click open a background tab, like the
+        // bookmarks bar chips; a plain click keeps the link's own behavior.
+        t.addEventListener('auxclick', function (e) {
+          if (e.button === 1) { e.preventDefault(); window.internalAPI.openInTab(url, { background: true }); }
+        });
+        t.addEventListener('click', function (e) {
+          if (e.ctrlKey || e.metaKey) { e.preventDefault(); window.internalAPI.openInTab(url, { background: true }); }
+        });
+        t.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          openTileMenu(e.clientX, e.clientY, url, t.getAttribute('data-id'));
+        });
+        t.addEventListener('dragstart', function (e) {
+          dragEl = t;
+          t.style.opacity = '0.45';
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', url); } catch (err) { /* drag store can be unavailable early */ }
+          }
+        });
+        t.addEventListener('dragend', function () {
+          t.style.opacity = '';
+          persistDomOrder();
+        });
+        t.addEventListener('dragover', function (e) {
+          if (!dragEl || dragEl === t) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          var r = t.getBoundingClientRect();
+          var before = (e.clientX - r.left) < r.width / 2;
+          if (before && t.previousSibling !== dragEl) grid.insertBefore(dragEl, t);
+          else if (!before && t.nextSibling !== dragEl) grid.insertBefore(dragEl, t.nextSibling);
+        });
+      });
+    }
+
+    // The drag gesture reorders the DOM live; on drop the visible order is
+    // persisted (settings.tileOrder) and the grid re-renders from state, so
+    // what is displayed is always exactly what was saved.
+    function persistDomOrder() {
+      var grid = document.getElementById('tilesGrid');
+      dragEl = null;
+      if (!grid) return;
+      var urls = [];
+      grid.querySelectorAll('a[data-url]').forEach(function (t) { urls.push(t.getAttribute('data-url')); });
+      window.internalAPI.setTileOrder(urls).then(function (s) {
+        tileData.settings = s || tileData.settings;
+        renderTiles();
+      });
+    }
+
+    // ---- Tile context menu ----
+    var menuEl = document.getElementById('tileMenu');
+    var menuCtx = { url: '', id: '' };
+    function closeTileMenu() { menuEl.style.display = 'none'; }
+    function openTileMenu(x, y, url, id) {
+      menuCtx = { url: url, id: id };
+      menuEl.innerHTML =
+        '<div class="ctx-item" data-act="open">Open</div>' +
+        '<div class="ctx-item" data-act="background">Open in background tab</div>' +
+        '<div class="ctx-item" data-act="edit">Edit tile...</div>' +
+        '<div class="ctx-item" data-act="hide">Hide from New Tab</div>';
+      menuEl.querySelectorAll('.ctx-item').forEach(function (item) {
+        item.addEventListener('click', function () {
+          var act = item.getAttribute('data-act');
+          closeTileMenu();
+          if (act === 'open') location.href = menuCtx.url;
+          else if (act === 'background') window.internalAPI.openInTab(menuCtx.url, { background: true });
+          else if (act === 'edit') openTileEditor(menuCtx.id, menuCtx.url);
+          else if (act === 'hide') window.internalAPI.hideTile(menuCtx.url).then(function (s) { tileData.settings = s || tileData.settings; renderTiles(); });
+        });
+      });
+      menuEl.style.display = 'block';
+      var r = menuEl.getBoundingClientRect();
+      menuEl.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 8)) + 'px';
+      menuEl.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
+    }
+
+    // ---- Tile editor ----
+    // Same conventions as the bookmarks bar's editor: the URL is resolved
+    // by the main process with the address-bar rules, and an emptied name
+    // falls back to the URL. The change lands on the underlying bookmark,
+    // so the bookmarks bar and the star state stay in sync automatically.
+    var editorEl = document.getElementById('tileEditor');
+    var editCtx = null;
+    function closeTileEditor() { editorEl.style.display = 'none'; editCtx = null; }
+    function openTileEditor(id, url) {
+      var b = tileData.bookmarks.find(function (x) { return x.id === id && x.url === url; }) ||
+              tileData.bookmarks.find(function (x) { return x.url === url; });
+      if (!b) return;
+      editCtx = b;
+      document.getElementById('editName').value = b.title === b.url ? '' : (b.title || '');
+      document.getElementById('editUrl').value = b.url;
+      editorEl.style.display = 'flex';
+      document.getElementById('editName').focus();
+    }
+    function saveTileEditor() {
+      if (!editCtx) { closeTileEditor(); return; }
+      window.internalAPI.updateBookmark(editCtx.id, {
+        title: document.getElementById('editName').value,
+        url: document.getElementById('editUrl').value
+      }).then(function (list) {
+        tileData.bookmarks = Array.isArray(list) ? list : tileData.bookmarks;
+        closeTileEditor();
+        renderTiles();
+      });
+    }
+
+    // One-time wiring: everything below survives the re-renders above
+    // (only the grid itself is rebuilt per render).
+    document.addEventListener('dragover', function (e) { if (dragEl) e.preventDefault(); });
+    document.addEventListener('drop', function (e) { if (dragEl) e.preventDefault(); }); // dropping a dragged tile must never navigate the page
+    document.addEventListener('mousedown', function (e) {
+      if (menuEl.style.display === 'block' && !menuEl.contains(e.target)) closeTileMenu();
     });
+    window.addEventListener('blur', closeTileMenu);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { closeTileMenu(); if (editCtx) closeTileEditor(); }
+    });
+    document.getElementById('editCancel').addEventListener('click', closeTileEditor);
+    document.getElementById('editSave').addEventListener('click', saveTileEditor);
+    ['editName', 'editUrl'].forEach(function (eid) {
+      document.getElementById(eid).addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); saveTileEditor(); }
+      });
+    });
+    editorEl.addEventListener('mousedown', function (e) { if (e.target === editorEl) closeTileEditor(); });
+    document.getElementById('restoreBtn').addEventListener('click', function () {
+      window.internalAPI.restoreTiles().then(function (s) { tileData.settings = s || tileData.settings; renderTiles(); });
+    });
+
+    refreshTiles().catch(function () {});
   `;
   return shell('New Tab', body, script);
 }
@@ -254,6 +487,10 @@ function newTabPage() {
 function bookmarksPage() {
   const body = `
     <h1>Bookmarks</h1>
+    <div class="toolbar">
+      <button class="secondary" id="exportBtn">Export JSON</button>
+      <button class="secondary" id="importBtn">Import JSON</button>
+    </div>
     <div id="list"><div class="empty">Loading…</div></div>
   `;
   const script = `
@@ -274,6 +511,20 @@ function bookmarksPage() {
       });
     }
     window.internalAPI.getBookmarks().then(render);
+    document.getElementById('exportBtn').addEventListener('click', function () {
+      window.internalAPI.exportData('bookmarks').then(function (res) {
+        if (res && res.ok) showToast('Exported ' + res.count + ' bookmark' + (res.count === 1 ? '' : 's') + ' to ' + basename(res.path));
+        else if (res && !res.canceled) showToast(res.error || 'Export failed');
+      });
+    });
+    document.getElementById('importBtn').addEventListener('click', function () {
+      window.internalAPI.importData('bookmarks').then(function (res) {
+        if (res && res.ok) {
+          showToast('Imported ' + res.imported + ' bookmark' + (res.imported === 1 ? '' : 's') + (res.skipped ? ' (' + res.skipped + ' skipped)' : ''));
+          window.internalAPI.getBookmarks().then(render);
+        } else if (res && !res.canceled) showToast(res.error || 'Import failed');
+      });
+    });
   `;
   return shell('Bookmarks', body, script);
 }
@@ -283,6 +534,8 @@ function historyPage() {
     <h1>History</h1>
     <div class="toolbar">
       <input type="search" id="filter" placeholder="Search history">
+      <button class="secondary" id="exportBtn">Export JSON</button>
+      <button class="secondary" id="importBtn">Import JSON</button>
       <button class="action danger" id="clearBtn">Clear all</button>
     </div>
     <div id="list"><div class="empty">Loading…</div></div>
@@ -311,6 +564,20 @@ function historyPage() {
     });
     document.getElementById('clearBtn').addEventListener('click', function () {
       window.internalAPI.clearHistory().then(function () { all = []; render(all); });
+    });
+    document.getElementById('exportBtn').addEventListener('click', function () {
+      window.internalAPI.exportData('history').then(function (res) {
+        if (res && res.ok) showToast('Exported ' + res.count + ' history item' + (res.count === 1 ? '' : 's') + ' to ' + basename(res.path));
+        else if (res && !res.canceled) showToast(res.error || 'Export failed');
+      });
+    });
+    document.getElementById('importBtn').addEventListener('click', function () {
+      window.internalAPI.importData('history').then(function (res) {
+        if (res && res.ok) {
+          showToast('Imported ' + res.imported + ' history item' + (res.imported === 1 ? '' : 's') + (res.skipped ? ' (' + res.skipped + ' skipped)' : ''));
+          window.internalAPI.getHistory().then(function (list) { all = list; render(all); });
+        } else if (res && !res.canceled) showToast(res.error || 'Import failed');
+      });
     });
   `;
   return shell('History', body, script);

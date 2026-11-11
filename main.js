@@ -1,4 +1,4 @@
-const { app, BaseWindow, WebContentsView, ipcMain, protocol, session, shell, Menu, clipboard } = require('electron');
+const { app, BaseWindow, WebContentsView, ipcMain, protocol, session, shell, Menu, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
@@ -224,8 +224,13 @@ let downloads = loadJSON('downloads.json', []);
 // title/URL/position and reloads briefly when revisited. A saved
 // settings.json still overrides this default, so existing installs keep
 // whatever was last chosen there.
+// hiddenTiles / tileOrder hold the New Tab page's "Frequently visited"
+// preferences (see the tiles IPC section below): the URLs kept out of the
+// tile grid, and the drag order of the tiles. Both are keyed by bookmark
+// URL, pruned when the bookmark is removed, and carried over when its URL
+// is edited — see the bookmarks handlers.
 let settings = Object.assign(
-  { theme: 'light', homepage: 'daybreak://newtab', searchEngine: 'google', showBookmarksBar: true, adBlockEnabled: true, memorySaverEnabled: true },
+  { theme: 'light', homepage: 'daybreak://newtab', searchEngine: 'google', showBookmarksBar: true, adBlockEnabled: true, memorySaverEnabled: true, hiddenTiles: [], tileOrder: [] },
   loadJSON('settings.json', {})
 );
 
@@ -1633,13 +1638,19 @@ ipcMain.handle('bookmarks:add', (_e, { url, title, favicon }) => {
   return bookmarks;
 });
 ipcMain.handle('bookmarks:remove', (_e, id) => {
+  const gone = bookmarks.find((b) => b.id === id);
   bookmarks = bookmarks.filter((b) => b.id !== id);
+  // The New Tab tile preferences are keyed by URL — a bookmark that no
+  // longer exists must not leave a dead "hidden"/"ordered" entry behind.
+  if (gone) pruneTilePrefsFor(gone.url);
   saveBookmarks();
   pushStateAll();
   return bookmarks;
 });
 ipcMain.handle('bookmarks:removeByUrl', (_e, url) => {
+  const gone = bookmarks.some((b) => b.url === url);
   bookmarks = bookmarks.filter((b) => b.url !== url);
+  if (gone) pruneTilePrefsFor(url);
   saveBookmarks();
   pushStateAll();
   return bookmarks;
@@ -1654,7 +1665,19 @@ ipcMain.handle('bookmarks:update', (_e, { id, patch }) => {
     // "example.com" in the editor produces a real URL instead of a dead
     // bookmark, and pasted text is treated like a search only if it
     // genuinely doesn't look like a URL.
+    const oldUrl = b.url;
     b.url = resolveInput(patch.url);
+    // Tile preferences are keyed by URL: an edit must carry them over, or
+    // a hidden or hand-placed tile would silently "reset" after a rename.
+    if (b.url !== oldUrl) {
+      ['hiddenTiles', 'tileOrder'].forEach((key) => {
+        const list = settings[key];
+        if (Array.isArray(list) && list.includes(oldUrl)) {
+          settings[key] = list.map((u) => (u === oldUrl ? b.url : u));
+          saveSettings();
+        }
+      });
+    }
   }
   if (typeof patch.title === 'string') {
     const t = patch.title.trim();
@@ -1697,6 +1720,215 @@ ipcMain.handle('history:clear', () => {
   saveHistory();
   return history;
 });
+
+// ---------------- IPC: data export / import (bookmarks & history) ----------------
+
+// Bookmarks and history can be exported to and imported from a plain,
+// versioned .json file — a small local backup/transfer story. The file
+// path ALWAYS comes from a native save/open dialog shown here in the main
+// process, never from the renderer: an internal page can only ask "show
+// the dialog", it can never name a file to write to or read from.
+// Imports are merges, not replacements — nothing the user already has is
+// ever deleted or overwritten — and duplicates are skipped rather than
+// doubled (bookmarks by URL, history entries by URL + timestamp).
+
+const EXPORT_VERSION = 1;
+// Sanity cap for a single import, so a pathological file can't stall the
+// app or blow past the history ceiling in one go.
+const IMPORT_MAX_ITEMS = 5000;
+
+function dateStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+// The dialog should open over the window the page lives in — the sender is
+// a tab view, so resolve it back to its window (null parent is fine: the
+// dialog just opens detached).
+function dialogParentFor(sender) {
+  const hit = tabFromSender(sender);
+  return hit && winAlive(hit.st) ? hit.st.win : null;
+}
+
+// One normalized shape for both kinds: {url, title, timestamp[, favicon]}.
+// Rows without a usable http(s) URL are dropped (the caller counts them as
+// skipped), so a daybreak:// URL or a search-query string can never become
+// a dead imported entry.
+function normalizeImportItem(raw, withFavicon) {
+  if (!raw || typeof raw !== 'object') return null;
+  let url = typeof raw.url === 'string' ? raw.url.trim() : '';
+  if (!url) return null;
+  if (!/^https?:\/\//i.test(url)) {
+    // Only bare domains are rescued here, resolved the way the address bar
+    // would resolve them. Anything else carrying a scheme (daybreak://,
+    // file://, ftp://, javascript:, …) or that just doesn't look like a URL
+    // is skipped — an imported row must be a real, loadable web address.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) || !looksLikeUrl(url)) return null;
+    url = normalizeUrl(url);
+  }
+  const title = String(raw.title || raw.name || '').trim().slice(0, 500) || url;
+  let timestamp = Number(raw.timestamp);
+  if (!isFinite(timestamp) || timestamp <= 0) timestamp = Date.now();
+  const item = { url, title, timestamp };
+  if (withFavicon) {
+    item.favicon = typeof raw.favicon === 'string' && /^(https?:\/\/|data:image\/)/i.test(raw.favicon)
+      ? raw.favicon.slice(0, 20000)
+      : '';
+  }
+  return item;
+}
+
+ipcMain.handle('data:export', async (e, kind) => {
+  if (kind !== 'bookmarks' && kind !== 'history') return { ok: false, error: 'Unknown data type.' };
+  const source = kind === 'bookmarks' ? bookmarks : history;
+  // The export carries the data, not internal bookkeeping: ids are
+  // regenerated on import, so they are left out here on purpose.
+  const items = source.map((r) => {
+    const item = { title: r.title || '', url: r.url, timestamp: r.timestamp || Date.now() };
+    if (kind === 'bookmarks') item.favicon = r.favicon || '';
+    return item;
+  });
+  let docs = '';
+  try { docs = app.getPath('documents'); } catch (err) { /* dialog picks its own default */ }
+  const { canceled, filePath } = await dialog.showSaveDialog(dialogParentFor(e.sender), {
+    title: 'Export ' + kind,
+    defaultPath: path.join(docs, 'daybreak-' + kind + '-' + dateStamp() + '.json'),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  try {
+    const payload = { app: 'daybreak', kind, version: EXPORT_VERSION, exportedAt: new Date().toISOString(), count: items.length, items };
+    // Pretty-printed on purpose: exports are meant to be human-readable,
+    // hand-editable and diffable — unlike the compact runtime data files.
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+    return { ok: true, path: filePath, count: items.length };
+  } catch (err) {
+    return { ok: false, error: 'Could not write the file: ' + ((err && err.message) || 'unknown error') };
+  }
+});
+
+ipcMain.handle('data:import', async (e, kind) => {
+  if (kind !== 'bookmarks' && kind !== 'history') return { ok: false, error: 'Unknown data type.' };
+  let docs = '';
+  try { docs = app.getPath('documents'); } catch (err) { /* dialog picks its own default */ }
+  const { canceled, filePaths } = await dialog.showOpenDialog(dialogParentFor(e.sender), {
+    title: 'Import ' + kind,
+    defaultPath: docs,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+  const filePath = filePaths[0];
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    return { ok: false, error: 'That file could not be read as JSON.' };
+  }
+  // Daybreak's own export wraps the rows in { items: [...] }; a bare array
+  // (hand-edited files, other tools' simple lists) is accepted too.
+  const rawItems = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : null);
+  if (!rawItems) return { ok: false, error: 'No items array found in that file.' };
+
+  let imported = 0;
+  let skipped = 0;
+  if (kind === 'bookmarks') {
+    const seen = new Set(bookmarks.map((b) => b.url));
+    for (const raw of rawItems) {
+      if (imported >= IMPORT_MAX_ITEMS) { skipped += rawItems.length - imported - skipped; break; }
+      const item = normalizeImportItem(raw, true);
+      if (!item || seen.has(item.url)) { skipped++; continue; }
+      seen.add(item.url);
+      bookmarks.push({ id: randomUUID(), url: item.url, title: item.title, favicon: item.favicon || null, timestamp: item.timestamp });
+      imported++;
+    }
+    if (imported) {
+      saveBookmarks();
+      // Bookmarks are global data; every open window's bar and star states resync.
+      pushStateAll();
+    }
+  } else {
+    const seen = new Set(history.map((h) => h.url + '|' + h.timestamp));
+    const additions = [];
+    for (const raw of rawItems) {
+      if (additions.length >= IMPORT_MAX_ITEMS) { skipped += rawItems.length - additions.length - skipped; break; }
+      const item = normalizeImportItem(raw, false);
+      const key = item ? item.url + '|' + item.timestamp : null;
+      if (!item || seen.has(key)) { skipped++; continue; }
+      seen.add(key);
+      additions.push({ id: randomUUID(), url: item.url, title: item.title, timestamp: item.timestamp });
+      imported++;
+    }
+    if (additions.length) {
+      // History is stored oldest-first; merged entries keep the file's
+      // chronological place and the same HISTORY_MAX ceiling as browsing.
+      history = history.concat(additions).sort((a, b) => a.timestamp - b.timestamp);
+      if (history.length > HISTORY_MAX) history = history.slice(history.length - HISTORY_MAX);
+      saveHistory();
+    }
+  }
+  return { ok: true, path: filePath, imported, skipped };
+});
+
+// ---------------- IPC: new tab page tile preferences ----------------
+
+// The "Frequently visited" grid is a view of the bookmarks list (newest 9)
+// that the user can shape on the New Tab page itself, WITHOUT the bookmarks
+// bar being affected:
+//   hiddenTiles — URLs kept out of the grid. Hiding is reversible (the
+//                 page offers "Show hidden tiles") and never deletes the
+//                 bookmark itself — the same contract as Chrome's own
+//                 remove-a-most-visited-tile.
+//   tileOrder   — display order for tiles the user placed by dragging;
+//                 URLs not in the list fall back to newest-first.
+// Both live in settings.json, are pruned when the underlying bookmark is
+// removed (pruneTilePrefsFor above) and carried over when its URL is edited.
+const TILE_LIST_CAP = 200; // keeps a stale preference list from ever growing without bound
+
+function saveTilePrefs() {
+  saveSettings();
+  return settings;
+}
+
+ipcMain.handle('tiles:hide', (_e, url) => {
+  if (typeof url !== 'string' || !url) return settings;
+  if (!Array.isArray(settings.hiddenTiles)) settings.hiddenTiles = [];
+  if (!settings.hiddenTiles.includes(url)) {
+    settings.hiddenTiles.push(url);
+    if (settings.hiddenTiles.length > TILE_LIST_CAP) settings.hiddenTiles = settings.hiddenTiles.slice(settings.hiddenTiles.length - TILE_LIST_CAP);
+    return saveTilePrefs();
+  }
+  return settings;
+});
+
+ipcMain.handle('tiles:restore', () => {
+  if (Array.isArray(settings.hiddenTiles) && settings.hiddenTiles.length) {
+    settings.hiddenTiles = [];
+    return saveTilePrefs();
+  }
+  return settings;
+});
+
+ipcMain.handle('tiles:order', (_e, orderedUrls) => {
+  if (!Array.isArray(orderedUrls)) return settings;
+  settings.tileOrder = orderedUrls.filter((u) => typeof u === 'string' && u).slice(0, TILE_LIST_CAP);
+  return saveTilePrefs();
+});
+
+// A tile preference keyed by a URL that no longer exists is a dead entry;
+// keep both lists clean when bookmarks go away.
+function pruneTilePrefsFor(url) {
+  let changed = false;
+  ['hiddenTiles', 'tileOrder'].forEach((key) => {
+    const list = settings[key];
+    if (Array.isArray(list) && list.includes(url)) {
+      settings[key] = list.filter((u) => u !== url);
+      changed = true;
+    }
+  });
+  if (changed) saveSettings();
+}
 
 // ---------------- IPC: downloads ----------------
 
