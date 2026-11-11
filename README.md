@@ -13,14 +13,16 @@ Chrome-style private (incognito) windows.
 
 - `package.json` — app manifest, start script, Electron dependency
 - `main.js` — main process: window and tab lifecycle, layout, ad blocker,
-  downloads, bookmarks/history/settings persistence, all IPC handlers
+  downloads, bookmarks/history/settings persistence, JSON export/import
+  for bookmarks and history, all IPC handlers
 - `preload.js` — context-bridge API exposed to the overlay UI (`window.api`)
 - `tab-preload.js` — restricted context-bridge exposed only to internal
   `daybreak://` pages (`window.internalAPI`); regular websites never see it.
   It also relays a bare mousedown from every page so the toolbar can close
   its floating menus when you click the page (see "Why the overlay doesn't
   cover the whole window"), and carries the error-page actions (retry,
-  accept certificate) back to the main process
+  accept certificate), the export/import actions and the New Tab tile
+  preferences (hide/restore/reorder) back to the main process
 - `pages.js` — HTML generators for the internal pages: new tab, bookmarks,
   history, downloads, settings, about, apps, performance, view source,
   error pages
@@ -100,6 +102,32 @@ The bar behaves like Chrome's:
   emptied name falls back to the URL, `Enter` saves and `Escape` cancels.
 - The bar is toggled with "Show bookmarks bar" in the main menu; the
   setting applies to every open window.
+
+### Frequently visited tiles
+
+The New Tab page's "Frequently visited" grid is a managed view of the
+bookmarks list — the newest 9 bookmarks become tiles — with the same kind
+of control the bookmarks bar offers, without the bar itself being affected:
+
+- **Left click** opens the site in the current tab; **middle click** or
+  **Ctrl/Cmd+click** opens it in a new background tab, like the bar chips.
+- **Right click** opens a tile menu: Open, Open in background tab,
+  Edit tile…, Hide from New Tab.
+- **Edit tile…** uses the same conventions as the bookmark editor — the
+  URL is resolved with the address-bar rules and an emptied name falls
+  back to the URL — and it edits the underlying bookmark, so the bookmarks
+  bar and the star state stay in sync.
+- **Hide from New Tab** removes a tile from the grid without deleting the
+  bookmark (the same non-destructive contract as Chrome's most-visited
+  tiles). A "Show hidden tiles (N)" control appears under the grid while
+  anything is hidden and brings them all back.
+- **Drag to reorder** the grid; the order persists in `settings.json`
+  (`tileOrder`) and never touches bookmarks-bar order. Tiles the user
+  didn't place keep the newest-first order behind the placed ones.
+
+Tile preferences (`hiddenTiles`, `tileOrder`) are keyed by bookmark URL:
+they are pruned when the bookmark is removed and carried over when its URL
+is edited, so a renamed bookmark doesn't lose its place.
 
 ### Why the overlay doesn't cover the whole window
 
@@ -204,6 +232,29 @@ injected renderer copy for strings rendered client-side from IPC data
 string goes through one of them before it can touch markup — these pages
 run with the privileged `internalAPI` bridge, so an unescaped page title
 would be a real vulnerability, not a cosmetic bug.
+
+### Exporting and importing data
+
+Bookmarks and history can be exported to and imported from plain `.json`
+files — a small, fully local backup and transfer story. "Export JSON" and
+"Import JSON" sit on `daybreak://bookmarks` and `daybreak://history`.
+
+- The export is a versioned document: `{ app: "daybreak", kind, version,
+  exportedAt, count, items: [...] }`, pretty-printed and hand-editable,
+  with each item carrying `url`, `title`, `timestamp` (and `favicon` for
+  bookmarks). A bare array of items is accepted on import too, so files
+  from other tools or hand-edited exports work.
+- **Imports are merges, not replacements** — nothing already in the
+  browser is deleted or overwritten. Bookmarks dedupe by URL; history
+  entries dedupe by URL + timestamp and merge chronologically under the
+  same 5000-entry ceiling as browsing. A toast reports how many rows were
+  imported and how many were skipped.
+- Rows without a usable http(s) URL (internal `daybreak://` pages, search
+  strings, other schemes) are skipped rather than imported as dead
+  entries; bare domains are resolved the way the address bar would.
+- The renderer never names file paths: the buttons only ask the main
+  process to show the native save/open dialogs, and all disk access
+  happens there.
 
 ### Apps
 
@@ -372,6 +423,13 @@ targets a specific layer, so a failure narrows down where to look.
 | 34 | On the New Tab page with bookmarks saved | Frequently visited tiles | Up to 9 tiles render from the newest bookmarks. |
 | 35 | From any loaded page, navigate to a dead URL, then click the error page's "Go back" — repeat with the toolbar Back button and `Alt+Left` | Error page back navigation | All three land on the page you came from (not a repeat error page, not a blank tab). |
 | 36 | As the very first action in a brand-new tab, type an unreachable URL | First-load failure | The error page shows with NO "Go back" button (nothing loaded behind the failure); Reload still works. |
+| 37 | On `daybreak://bookmarks`, click Export JSON and save the file | Bookmarks export | A native save dialog proposes `daybreak-bookmarks-<date>.json`; the saved file contains a JSON object with an `items` array holding every bookmark. |
+| 38 | Click Import JSON and pick the file just exported | Bookmarks import dedupe | Toast reports 0 imported with one skipped per bookmark; the list is unchanged. |
+| 39 | Edit the exported file so one item has a new URL and one has a `daybreak://` URL, then import it | Bookmarks import merge | The changed URL is appended as a new bookmark; the `daybreak://` row is skipped. |
+| 40 | On `daybreak://history`, Export JSON, then import the same file | History export/import | Same dialog flow; re-import skips everything as duplicates; rows with a new URL+timestamp merge chronologically. |
+| 41 | On the New Tab page, right-click a tile | Tile menu | Open / Open in background tab / Edit tile… / Hide from New Tab; the background open does not steal focus. |
+| 42 | Edit a tile (rename, fix the URL), then look at the bookmarks bar | Tile edit | Same conventions as the bookmark editor; the bar chip and star state update with it. |
+| 43 | Hide two tiles, drag another to a new position, restart the app | Tile preferences | Hidden tiles stay out of the grid ("Show 2 hidden tiles" restores them); the dragged order survives the restart; the bookmarks bar order is unaffected. |
 
 ---
 
@@ -382,7 +440,8 @@ main.js
 ├─ persisted data          → bookmarks.json, history.json, downloads.json,
 │                             settings.json in Electron's userData folder
 │                             (private-session downloads are filtered out
-│                             of downloads.json)
+│                             of downloads.json; settings.json also holds
+│                             the New Tab tile preferences)
 ├─ windows[]               → one state object per window: BaseWindow,
 │                             overlay view, tab map, active tab, layout
 │                             cache (normal and private alike)
@@ -405,20 +464,24 @@ main.js
                               bookmarks (add/update/remove/reorder), history,
                               downloads, settings, find, zoom, process
                               metrics, overlay extra height, page click-away,
-                              error pages (retry, certificate exceptions)
+                              JSON export/import (bookmarks & history),
+                              New Tab tile preferences, error pages
+                              (retry, certificate exceptions)
 
 preload.js                 → window.api bridge for the overlay UI (toolbar,
-                            bookmarks bar, menus, find bar)
+                             bookmarks bar, menus, find bar)
 
 tab-preload.js             → window.internalAPI for daybreak:// pages only;
-                            plus the page mousedown relay that closes the
-                            toolbar's floating menus on page clicks
+                             plus the page mousedown relay that closes the
+                             toolbar's floating menus on page clicks, and
+                             the action bridge for error pages, export/
+                             import and New Tab tile preferences
 
 index.html                 → the overlay: tab strip (drag reorder, wheel
-                            scroll), address bar, bookmarks bar (200px
-                            chips, click/middle/ctrl click, right-click
-                            menu, editor, drag reorder), menus, find bar
+                             scroll), address bar, bookmarks bar (200px
+                             chips, click/middle/ctrl click, right-click
+                             menu, editor, drag reorder), menus, find bar
 
 pages.js                   → generators for the daybreak:// pages (incl.
-                            error pages) + APPS hub
+                             error pages) + APPS hub
 2FA.html                   → self-contained TOTP authenticator app
