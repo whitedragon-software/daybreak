@@ -25,6 +25,20 @@
     --hover: #3c4043;
     --danger: #f28b82;
   }
+  /* Private (incognito) WINDOW: the whole chrome goes dark in BOTH themes,
+     like Chrome's incognito UI — the window itself is the private unit, so
+     no per-tab styling is needed. Declared after body.dark so it wins when
+     the user's theme is also dark (the palettes are near-identical anyway). */
+  body.private {
+    --bg: #202124;
+    --tabbar: #111214;
+    --text: #e8eaed;
+    --text-dim: #9aa0a6;
+    --border: #3c4043;
+    --accent: #8ab4f8;
+    --hover: #3c4043;
+    --danger: #f28b82;
+  }
 
   html, body {
     margin: 0;
@@ -127,6 +141,17 @@
   /* A discarded (Memory Saver) tab is unchanged visually except a slightly
      dimmed title — it's still a real tab, just not currently running. */
   .tab.discarded .tab-title { opacity: 0.65; }
+  /* Private-window indicator — a small pill next to the logo, shown only
+     when the overlay is a private window's (body.private comes from the
+     state push). */
+  #privBadge {
+    display: none; align-items: center; gap: 5px; flex-shrink: 0;
+    margin: 0 4px 6px 0; padding: 2px 9px; border-radius: 10px;
+    background: rgba(138,180,248,0.15); color: #8ab4f8;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.2px;
+  }
+  #privBadge svg { width: 11px; height: 11px; display: block; }
+  body.private #privBadge { display: inline-flex; }
   .tab .tab-close {
     width: 16px; height: 16px; line-height: 16px; text-align: center;
     border-radius: 3px; color: inherit; opacity: 0.55; flex-shrink: 0; font-size: 13px;
@@ -203,14 +228,19 @@
   }
   #bookmarksBar.show { display: flex; }
   #bookmarksBar::-webkit-scrollbar { display: none; }
+  /* Chrome caps bookmark chips at ~200px and ellipsizes the label — without
+     a cap, one bookmark with a long name swallowed the whole bar. */
   .bm-chip {
-    display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
-    font-size: 11px; color: var(--text); cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 4px;
+    font-size: 11px; color: var(--text); cursor: pointer; white-space: nowrap;
+    flex: 0 0 auto; max-width: 200px; min-width: 0;
     transition: background-color .1s ease;
   }
   .bm-chip:hover { background: var(--hover); }
   .bm-chip-icon { width: 13px; height: 13px; border-radius: 2px; flex-shrink: 0; }
+  .bm-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .bm-empty { font-size: 11px; color: var(--text-dim); padding: 0 4px; }
+  .bm-chip.bm-dragging { opacity: 0.45; cursor: grabbing; }
 
   /* =============== find bar =============== */
   #findBar {
@@ -237,8 +267,16 @@
     box-shadow: 0 8px 28px rgba(0,0,0,0.22); min-width: 220px; z-index: 9999;
     padding: 8px; opacity: 0; transform: translateY(-6px) scale(.98); pointer-events: none;
     transition: opacity .12s ease, transform .12s ease;
+    /* maxHeight is set at open time (capMenuHeight): on a very flat window
+       the menu scrolls internally instead of being cut off at the window
+       edge. */
+    overflow-y: auto; overflow-x: hidden;
   }
   .floating-menu.show { opacity: 1; transform: none; pointer-events: auto; }
+  .floating-menu::-webkit-scrollbar { width: 8px; }
+  .floating-menu::-webkit-scrollbar-track { background: transparent; }
+  .floating-menu::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .floating-menu::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
   .menu-item {
     padding: 7px 8px; font-size: 12.5px; color: var(--text); cursor: pointer;
     display: flex; align-items: center; gap: 10px;
@@ -256,12 +294,32 @@
   .menu-item .mi-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .menu-item .mi-shortcut { color: var(--text-dim); font-size: 10.5px; flex-shrink: 0; }
   .menu-divider { height: 1px; background: var(--border); margin: 6px 4px; }
+
+  /* =============== bookmark editor =============== */
+  /* Declared after .floating-menu so its overflow override wins. */
+  .bm-editor { min-width: 300px; max-width: 340px; overflow: visible; }
+  .bm-editor .bm-editor-title { font-size: 12.5px; font-weight: 600; margin: 2px 2px 10px; }
+  .bm-editor label { display: block; font-size: 10.5px; color: var(--text-dim); margin: 8px 2px 3px; }
+  .bm-editor input {
+    width: 100%; border: 1px solid var(--border); border-radius: 6px; outline: none;
+    background: transparent; color: var(--text); font-size: 12px; padding: 6px 8px;
+  }
+  .bm-editor input:focus { border-color: var(--accent); }
+  .bm-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .bm-editor-actions button {
+    border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+    background: transparent; color: var(--text); transition: background-color .1s ease;
+  }
+  .bm-editor-actions button:hover { background: var(--hover); }
+  .bm-editor-actions button.primary { background: var(--accent); color: #fff; }
+  .bm-editor-actions button.primary:hover { background: var(--accent); filter: brightness(1.1); }
 </style>
 </head>
 <body>
   <div id="chrome">
     <div id="tabRow">
       <div id="logo" title="Daybreak"></div>
+      <span id="privBadge" title="You're browsing privately — history and cookies are not saved"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5h15"/><path d="M6.5 10.5 8 4.5h8l1.5 6"/><circle cx="8.3" cy="16.8" r="2.3"/><circle cx="15.7" cy="16.8" r="2.3"/><path d="M10.6 16.8h2.8"/></svg>Private</span>
       <div id="tabstrip"></div>
       <button id="newTabBtn" title="New tab">+</button>
       <div id="winctrls">
@@ -298,6 +356,7 @@
 
   <div id="menuDropdown" class="floating-menu">
     <div class="menu-item" id="menuNewTab"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span><span class="mi-label">New tab</span><span class="mi-shortcut">Ctrl+T</span></div>
+    <div class="menu-item" id="menuPrivateWindow"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5h15"/><path d="M6.5 10.5 8 4.5h8l1.5 6"/><circle cx="8.3" cy="16.8" r="2.3"/><circle cx="15.7" cy="16.8" r="2.3"/><path d="M10.6 16.8h2.8"/></svg></span><span class="mi-label">New private window</span><span class="mi-shortcut">Ctrl+Shift+N</span></div>
     <div class="menu-item" id="menuReopen"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 2.6 5.9"/><polyline points="4 5 4 10 9 10"/></svg></span><span class="mi-label">Reopen closed tab</span><span class="mi-shortcut">Ctrl+Shift+T</span></div>
     <div class="menu-divider"></div>
     <div class="menu-item" id="menuBookmarks"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><polygon points="12 3 14.9 9.3 21.8 10 16.5 14.6 18 21.4 12 17.8 6 21.4 7.5 14.6 2.2 10 9.1 9.3"/></svg></span><span class="mi-label">Bookmarks</span></div>
@@ -329,11 +388,46 @@
     <div class="menu-item danger" id="ctxClose"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="17" y1="7" x2="7" y2="17"/><line x1="7" y1="7" x2="17" y2="17"/></svg></span><span class="mi-label">Close tab</span><span class="mi-shortcut">Ctrl+W</span></div>
   </div>
 
+  <div id="bmContextMenu" class="floating-menu">
+    <div class="menu-item" id="bmCtxOpenNew"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><line x1="20" y1="4" x2="12" y2="12"/><path d="M19 13.5V19a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5.5"/></svg></span><span class="mi-label">Open in new tab</span></div>
+    <div class="menu-item" id="bmCtxOpenBg"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><rect x="8" y="8" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></svg></span><span class="mi-label">Open in background tab</span></div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" id="bmCtxEdit"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5l1-4L16 5a1.6 1.6 0 0 1 2.3 0l.7.7a1.6 1.6 0 0 1 0 2.3L8.5 18.5l-4 1z"/></svg></span><span class="mi-label">Edit bookmark…</span></div>
+    <div class="menu-item danger" id="bmCtxDelete"><span class="mi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4.5 6.5 19.5 6.5"/><path d="M8.5 6.5V4.8a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v1.7"/><path d="M6.5 6.5l1 13.2a1 1 0 0 0 1 .9h7a1 1 0 0 0 1-.9l1-13.2"/></svg></span><span class="mi-label">Delete</span></div>
+  </div>
+
+  <div id="bmEditor" class="floating-menu bm-editor">
+    <div class="bm-editor-title">Edit bookmark</div>
+    <label for="bmEditName">Name</label>
+    <input id="bmEditName" type="text" spellcheck="false">
+    <label for="bmEditUrl">URL</label>
+    <input id="bmEditUrl" type="text" spellcheck="false">
+    <div class="bm-editor-actions">
+      <button id="bmEditCancel">Cancel</button>
+      <button id="bmEditSave" class="primary">Save</button>
+    </div>
+  </div>
+
 <script>
 (function () {
   var state = { activeId: null, tabs: [], settings: {} };
   var editingUrl = false;
   var contextTabId = null;
+  // Which bookmark a right-click menu / editor session is about — always
+  // resolved back to a FRESH bookmark object at action time, never a stale
+  // snapshot captured when the menu opened.
+  var contextBookmarkId = null;
+  var bmEditId = null;
+  // Bookmark chip drag-to-reorder (same gesture model as the tab strip).
+  var bmDrag = null; // { id, el, startX, startY, dragging }
+  var suppressNextBmClick = false;
+  var BM_DRAG_THRESHOLD = 5;
+  // Real window content height, reported by main.js via win:state (the
+  // overlay's own viewport is only the toolbar strip, so innerHeight here
+  // is NOT the window height). Floating menus cap themselves against this
+  // so a flat window scrolls them instead of clipping; innerHeight is just
+  // a sane stand-in until the first push lands.
+  var winH = window.innerHeight || 800;
 
   var tabstrip = document.getElementById('tabstrip');
   // A vertical scroll/wheel gesture doesn't natively scroll a horizontally
@@ -365,6 +459,10 @@
   var findBar = document.getElementById('findBar');
   var findInput = document.getElementById('findInput');
   var findCount = document.getElementById('findCount');
+  var bmContextMenu = document.getElementById('bmContextMenu');
+  var bmEditor = document.getElementById('bmEditor');
+  var bmEditName = document.getElementById('bmEditName');
+  var bmEditUrl = document.getElementById('bmEditUrl');
 
   function activeTab() {
     return state.tabs.find(function (t) { return t.id === state.activeId; }) || null;
@@ -603,10 +701,23 @@
     document.getElementById('menuBarCheck').textContent = show ? '\u2713' : '';
   }
 
+  function bookmarkById(id) {
+    return (state.bookmarks || []).find(function (x) { return x.id === id; }) || null;
+  }
+
   var lastBookmarksSignature = null;
   function refreshBookmarksBar() {
+    // Same rule as the tab strip: a state push must not fight a live drag
+    // reorder — it would snap the chips back to their pre-drag order
+    // mid-gesture. Normal rendering resumes the moment the drag ends.
+    if (bmDrag && bmDrag.dragging) return;
     var list = state.bookmarks || [];
-    var signature = list.map(function (b) { return b.id; }).join(',');
+    // Unlike tabs, a bookmark's visible fields can change without its id
+    // changing (edit name/URL/favicon), so the signature has to include
+    // them — an id-only signature would never rebuild after an edit.
+    var signature = list.map(function (b) {
+      return b.id + '\u0001' + (b.title || '') + '\u0001' + (b.url || '') + '\u0001' + (b.favicon || '');
+    }).join('\u0002');
     if (signature === lastBookmarksSignature) return; // nothing actually changed — don't touch the DOM
     lastBookmarksSignature = signature;
 
@@ -619,32 +730,102 @@
       return;
     }
     list.forEach(function (b) {
-      var chip = document.createElement('div');
-      chip.className = 'bm-chip';
-      chip.title = b.url;
-      chip.addEventListener('click', function () {
-        if (state.activeId) window.api.navigate(state.activeId, b.url);
-      });
-
-      if (b.favicon) {
-        var icon = document.createElement('img');
-        icon.className = 'bm-chip-icon';
-        icon.src = b.favicon;
-        icon.alt = '';
-        icon.addEventListener('error', function () { icon.remove(); });
-        chip.appendChild(icon);
-      }
-
-      var label = document.createElement('span');
-      label.textContent = b.title || b.url;
-      chip.appendChild(label);
-
-      bookmarksBar.appendChild(chip);
+      bookmarksBar.appendChild(buildBookmarkChip(b));
     });
   }
 
+  function buildBookmarkChip(b) {
+    var chip = document.createElement('div');
+    chip.className = 'bm-chip';
+    chip.dataset.bmId = b.id;
+    chip.title = b.url;
+
+    // Left click navigates the current tab (Chrome behavior); Ctrl/Cmd or
+    // middle click opens a background tab instead. With no active tab there
+    // is nothing to navigate, so a plain click opens a new tab then.
+    chip.addEventListener('click', function (e) {
+      if (suppressNextBmClick) { suppressNextBmClick = false; return; }
+      if (e.ctrlKey || e.metaKey) { window.api.createTab(b.url, { background: true }); return; }
+      if (state.activeId) window.api.navigate(state.activeId, b.url);
+      else window.api.createTab(b.url);
+    });
+    chip.addEventListener('mousedown', function (e) {
+      if (e.button === 1) { // middle click — background tab, no autoscroll
+        e.preventDefault();
+        e.stopPropagation();
+        window.api.createTab(b.url, { background: true });
+        return;
+      }
+      if (e.button !== 0) return;
+      bmDrag = { id: b.id, el: chip, startX: e.clientX, startY: e.clientY, dragging: false };
+    });
+    chip.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      contextBookmarkId = b.id;
+      openBmContextMenu(e.clientX, e.clientY);
+    });
+
+    if (b.favicon) {
+      var icon = document.createElement('img');
+      icon.className = 'bm-chip-icon';
+      icon.src = b.favicon;
+      icon.alt = '';
+      icon.addEventListener('error', function () { icon.remove(); });
+      chip.appendChild(icon);
+    }
+    var label = document.createElement('span');
+    label.className = 'bm-label';
+    label.textContent = b.title || b.url;
+    chip.appendChild(label);
+    return chip;
+  }
+
+  // ---- bookmark drag-to-reorder ----
+  // Same gesture model as the tab strip: hold, pass a 5px threshold, then
+  // the bar reorders live under the cursor. The dragged chip is skipped
+  // while scanning, so the insertion point is the first other chip whose
+  // midpoint the cursor has passed; past all of them means the right end.
+  document.addEventListener('mousemove', function (e) {
+    if (!bmDrag) return;
+    var dx = e.clientX - bmDrag.startX, dy = e.clientY - bmDrag.startY;
+    if (!bmDrag.dragging) {
+      if (Math.abs(dx) < BM_DRAG_THRESHOLD && Math.abs(dy) < BM_DRAG_THRESHOLD) return;
+      bmDrag.dragging = true;
+      bmDrag.el.classList.add('bm-dragging');
+    }
+    var chips = bookmarksBar.querySelectorAll('.bm-chip');
+    var target = null;
+    for (var i = 0; i < chips.length; i++) {
+      var c = chips[i];
+      if (c === bmDrag.el) continue;
+      var r = c.getBoundingClientRect();
+      if (e.clientX < r.left + r.width / 2) { target = c; break; }
+    }
+    if (target) bookmarksBar.insertBefore(bmDrag.el, target);
+    else bookmarksBar.appendChild(bmDrag.el);
+  });
+
+  document.addEventListener('mouseup', function () {
+    if (!bmDrag) return;
+    if (bmDrag.dragging) {
+      bmDrag.el.classList.remove('bm-dragging');
+      suppressNextBmClick = true;
+      var ids = Array.prototype.map.call(bookmarksBar.querySelectorAll('.bm-chip'), function (c) { return c.dataset.bmId; });
+      window.api.reorderBookmarks(ids);
+      // A click event fires in the same task, right after this handler —
+      // clear the suppressor after it so it can never eat a LATER,
+      // unrelated click on a chip.
+      setTimeout(function () { suppressNextBmClick = false; }, 0);
+    }
+    bmDrag = null;
+  });
+
   function applyTheme() {
     document.body.classList.toggle('dark', !!(state.settings && state.settings.theme === 'dark'));
+    // A private window is dark-chrome in both themes and carries the
+    // Private badge (body.private) — the window itself is the private unit.
+    document.body.classList.toggle('private', !!state.priv);
   }
 
   function render() {
@@ -659,6 +840,10 @@
   window.api.onWinState(function (winState) {
     maxBtn.innerHTML = winState.maximized ? '&#10064;' : '&#9723;';
     maxBtn.title = winState.maximized ? 'Restore' : 'Maximize';
+    // Every real resize rides along here (main.js pushes win:state on
+    // resize), so winH tracks the window even while this overlay's own
+    // viewport stays toolbar-sized.
+    if (typeof winState.height === 'number' && winState.height > 0) winH = winState.height;
   });
   window.api.onFocusUrlbar(function () { urlbar.focus(); urlbar.select(); });
   window.api.onBookmarkToggleRequest(function () { starBtn.click(); });
@@ -702,10 +887,16 @@
   function closeAllMenus() {
     menuDropdown.classList.remove('show');
     tabContextMenu.classList.remove('show');
+    bmContextMenu.classList.remove('show');
+    bmEditId = null;
+    bmEditor.classList.remove('show');
     shrinkOverlayIfIdle();
   }
   function anyMenuOpen() {
-    return menuDropdown.classList.contains('show') || tabContextMenu.classList.contains('show');
+    return menuDropdown.classList.contains('show') ||
+           tabContextMenu.classList.contains('show') ||
+           bmContextMenu.classList.contains('show') ||
+           bmEditor.classList.contains('show');
   }
 
   // Reserve exactly as much extra overlay height as the floating element
@@ -717,12 +908,28 @@
     window.api.setOverlayExtra(Math.ceil(rect.bottom) + 12);
   }
 
+  // A window resized (or snapped) very flat doesn't have room for a tall
+  // menu under the toolbar — the old behavior just cut the bottom off with
+  // no way to reach the hidden items. Cap the menu to the space below its
+  // top edge and let it scroll internally instead. The cap uses winH (the
+  // real window height from win:state), NOT this overlay's viewport — the
+  // viewport is only the toolbar strip until the extra height below is
+  // actually reserved. 120px floor keeps the menu usable even in the
+  // extreme case where the first win:state hasn't landed yet.
+  function capMenuHeight(el, topPx) {
+    var avail = winH - topPx - 8;
+    if (avail < 120) avail = 120;
+    el.style.maxHeight = Math.ceil(avail) + 'px';
+  }
+
   function openMenu() {
     closeAllMenus();
     var rect = menuBtn.getBoundingClientRect();
-    menuDropdown.style.top = (rect.bottom + 4) + 'px';
+    var top = rect.bottom + 4;
+    menuDropdown.style.top = top + 'px';
     menuDropdown.style.right = '8px';
     menuDropdown.style.left = '';
+    capMenuHeight(menuDropdown, top);
     menuDropdown.classList.add('show');
     growToFit(menuDropdown);
   }
@@ -735,7 +942,14 @@
     tabContextMenu.style.top = (y + 2) + 'px';
     tabContextMenu.style.left = x + 'px';
     tabContextMenu.style.right = '';
+    capMenuHeight(tabContextMenu, y + 2);
     tabContextMenu.classList.add('show');
+    // A tab near the right window edge would open the menu half off-screen
+    // (the overlay is exactly the window width) — flip it back inside.
+    var rect = tabContextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 8) {
+      tabContextMenu.style.left = Math.max(8, window.innerWidth - rect.width - 8) + 'px';
+    }
     growToFit(tabContextMenu);
   }
 
@@ -752,6 +966,7 @@
 
   // ---- main menu items (internal pages open as NEW TABS, never replace the current page) ----
   document.getElementById('menuNewTab').addEventListener('click', function () { window.api.createTab(); closeAllMenus(); });
+  document.getElementById('menuPrivateWindow').addEventListener('click', function () { window.api.createPrivateWindow(); closeAllMenus(); });
   document.getElementById('menuBookmarks').addEventListener('click', function () { window.api.createTab('daybreak://bookmarks'); closeAllMenus(); });
   document.getElementById('menuHistory').addEventListener('click', function () { window.api.createTab('daybreak://history'); closeAllMenus(); });
   document.getElementById('menuDownloads').addEventListener('click', function () { window.api.createTab('daybreak://downloads'); closeAllMenus(); });
@@ -779,23 +994,178 @@
   document.getElementById('ctxCloseOthers').addEventListener('click', function () { if (contextTabId) window.api.closeOtherTabs(contextTabId); closeAllMenus(); });
   document.getElementById('ctxClose').addEventListener('click', function () { if (contextTabId) window.api.closeTab(contextTabId); closeAllMenus(); });
 
+  // ---- bookmark chip context menu (right-click a chip) ----
+  function openBmContextMenu(x, y) {
+    closeAllMenus();
+    bmContextMenu.style.top = (y + 2) + 'px';
+    bmContextMenu.style.left = x + 'px';
+    bmContextMenu.style.right = '';
+    capMenuHeight(bmContextMenu, y + 2);
+    bmContextMenu.classList.add('show');
+    // Same right-edge flip as the tab menu: a chip near the window's right
+    // edge must not open the menu half off-screen.
+    var rect = bmContextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 8) {
+      bmContextMenu.style.left = Math.max(8, window.innerWidth - rect.width - 8) + 'px';
+    }
+    growToFit(bmContextMenu);
+  }
+
+  document.getElementById('bmCtxOpenNew').addEventListener('click', function () {
+    var b = bookmarkById(contextBookmarkId);
+    if (b) window.api.createTab(b.url);
+    closeAllMenus();
+  });
+  document.getElementById('bmCtxOpenBg').addEventListener('click', function () {
+    var b = bookmarkById(contextBookmarkId);
+    if (b) window.api.createTab(b.url, { background: true });
+    closeAllMenus();
+  });
+  document.getElementById('bmCtxEdit').addEventListener('click', function () {
+    var id = contextBookmarkId;
+    if (id) openBmEditor(id); else closeAllMenus();
+  });
+  document.getElementById('bmCtxDelete').addEventListener('click', function () {
+    var b = bookmarkById(contextBookmarkId);
+    if (b) window.api.removeBookmark(b.id);
+    closeAllMenus();
+  });
+
+  // ---- bookmark editor (chip right-click → Edit) ----
+  function openBmEditor(id) {
+    closeAllMenus();
+    var b = bookmarkById(id);
+    if (!b) return;
+    bmEditId = id;
+    bmEditName.value = b.title || b.url;
+    bmEditUrl.value = b.url;
+    // Anchored under the chip when possible, centered under the toolbar as
+    // a fallback (e.g. the chip was near the right edge).
+    var top = 84, left = null;
+    var chip = bookmarksBar.querySelector('.bm-chip[data-bm-id="' + id + '"]');
+    if (chip) {
+      var r = chip.getBoundingClientRect();
+      left = r.left;
+      top = Math.round(r.bottom + 6);
+    }
+    bmEditor.style.top = top + 'px';
+    bmEditor.style.right = '';
+    bmEditor.style.left = Math.round(Math.min(Math.max(8, left === null ? (window.innerWidth - 320) / 2 : left), Math.max(8, window.innerWidth - 328))) + 'px';
+    capMenuHeight(bmEditor, top);
+    bmEditor.classList.add('show');
+    growToFit(bmEditor);
+    bmEditName.focus();
+    bmEditName.select();
+  }
+
+  function saveBmEditor() {
+    var id = bmEditId;
+    var title = bmEditName.value;
+    var url = bmEditUrl.value;
+    closeAllMenus();
+    if (!id) return;
+    // Resolved by main.js with the same rules as the address bar. An
+    // emptied name falls back to the URL there, like Chrome.
+    window.api.updateBookmark(id, { title: title, url: url });
+  }
+
+  document.getElementById('bmEditSave').addEventListener('click', saveBmEditor);
+  document.getElementById('bmEditCancel').addEventListener('click', function () { closeAllMenus(); });
+  bmEditName.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); bmEditUrl.focus(); bmEditUrl.select(); }
+  });
+  bmEditUrl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); saveBmEditor(); }
+  });
+
+  // Clicking the PAGE (outside the overlay's toolbar area) never reaches
+  // this document, so tab-preload.js relays every page mousedown through
+  // main.js to this event. Chrome closes its dropdowns when you click the
+  // page, and so does Daybreak now — without this, an open menu used to
+  // stay open and keep its reserved (unclickable) strip over the page.
+  // The find bar is deliberately left alone: it stays open across page
+  // clicks, and shrinkOverlayIfIdle inside closeAllMenus keeps its
+  // reserved space intact.
+  window.api.onUiClickAway(function () {
+    if (anyMenuOpen()) closeAllMenus();
+  });
+
   // ---- find in page ----
   var lastFindQuery = '';
+  var lastFindDirection = true;
   var findDebounce = null;
+  var findKickTimer = null;
+  var findKickTabId = null;
+  var lastFindResult = { active: 0, total: 0 };
+  var pdfEstTotal = 0;
+
+  // Chromium's built-in PDF viewer (the MimeHandler extension) misbehaves
+  // for findInPage in three ways:
+  //   1. The first call of a session (the "fresh search") is silently
+  //      dropped — no found-in-page reply, no selection — so the count
+  //      stayed empty until the first Next press.
+  //   2. Every reply reports the match total inflated: the first answered
+  //      call of a session reports real+1, and every further reply adds
+  //      another +1 (10 real matches arrive as 11, then 12, 13 … — with
+  //      the startup kick below they grow one step faster still).
+  //   3. An advance past the last match comes back as an empty report
+  //      instead of wrapping.
+  // Since the real total is a constant for a given query, (2) is undone by
+  // keeping the smallest (reported − ordinal) ever seen on forward
+  // replies: the first reply is exactly real+ordinal, so that minimum
+  // converges on the true count and later, more inflated replies can only
+  // leave it unchanged. Backward replies inflate by a different amount,
+  // so they never touch the estimate — they just reuse it.
+  function isPdfTab() {
+    var t = state.tabs.find(function (x) { return x.id === state.activeId; });
+    var u = t && t.url ? String(t.url).toLowerCase() : '';
+    // mhjfbmdgcfjbbpaeojofohoefgiehjai = Chromium's PDF MimeHandler extension
+    return (/\.pdf([?#]|$)/.test(u) || u.indexOf('mhjfbmdgcfjbbpaeojofohoefgiehjai') !== -1);
+  }
+
+  function startFind(q, forward) {
+    lastFindQuery = q;
+    lastFindResult = { active: 0, total: 0 };
+    pdfEstTotal = 0;
+    // Fresh PDF searches always run forward: a backward fresh search has
+    // no selection to walk back from, so it would answer with nothing.
+    forward = forward !== false;
+    lastFindDirection = forward;
+    window.api.findStart(state.activeId, q, forward);
+    if (findKickTimer) { clearTimeout(findKickTimer); findKickTimer = null; }
+    if (!isPdfTab()) { findKickTabId = null; return; }
+    // Kick the PDF plugin: the extra "next" is the call it actually
+    // answers, and since the dropped fresh search selected nothing, it
+    // lands on match 1 — exactly where a fresh search should land. If a
+    // reply already arrived the session is alive and the kick is skipped,
+    // so we never skip a match ahead.
+    findKickTabId = state.activeId;
+    findKickTimer = setTimeout(function () {
+      findKickTimer = null;
+      if (!findKickTabId || findKickTabId !== state.activeId) return;
+      if (findInput.value !== q) return;
+      if (lastFindResult.active > 0 || lastFindResult.total > 0) return;
+      lastFindDirection = true;
+      window.api.findNext(findKickTabId, q, true);
+    }, 80);
+  }
 
   function doFind(forward) {
     var q = findInput.value;
     if (!q || !state.activeId) return;
-    if (q !== lastFindQuery) {
-      lastFindQuery = q;
-      window.api.findStart(state.activeId, q, forward);
-    } else {
-      window.api.findNext(state.activeId, q, forward);
-    }
+    if (q !== lastFindQuery) { startFind(q, forward); return; }
+    // Plain advance from here on. Chromium wraps past both ends of the
+    // match list by itself when findNext runs past the last (or before
+    // the first) match, so the manual session restarts are gone — on PDFs
+    // those restarts were dead presses (the fresh-search call is the one
+    // the plugin drops) and they corrupted the match counts everywhere.
+    lastFindDirection = forward;
+    window.api.findNext(state.activeId, q, forward);
   }
 
   function openFindBar() {
     findBar.classList.add('show');
+    capMenuHeight(findBar, 44); // findBar's fixed top offset (see CSS)
     findInput.focus();
     findInput.select();
     growToFit(findBar);
@@ -805,19 +1175,52 @@
     findBar.classList.remove('show');
     findCount.textContent = '';
     lastFindQuery = '';
+    lastFindResult = { active: 0, total: 0 };
+    pdfEstTotal = 0;
     if (findDebounce) { clearTimeout(findDebounce); findDebounce = null; }
+    if (findKickTimer) { clearTimeout(findKickTimer); findKickTimer = null; }
+    findKickTabId = null;
     if (state.activeId) window.api.findStop(state.activeId);
     shrinkOverlayIfIdle();
   }
   window.api.onFindOpen(openFindBar);
   window.api.onFindResult(function (r) {
     if (!r || !r.tabId || r.tabId !== state.activeId) return;
-    findCount.textContent = r.matches ? (r.activeMatch + ' of ' + r.matches) : 'No results';
+    var active = r.activeMatch || 0;
+    var total = r.matches || 0;
+    if (isPdfTab()) {
+      if (total === 0) {
+        // Either a genuinely empty query or an advance past the last
+        // match (the plugin answers that with an empty report instead of
+        // wrapping). Once matches were seen, restart the session so it
+        // lands on a real match instead of a dead "No results".
+        if (pdfEstTotal > 0) { startFind(lastFindQuery, true); return; }
+        lastFindResult = { active: 0, total: 0 };
+        findCount.textContent = 'No results';
+        return;
+      }
+      // Refine the real total from forward replies only; backward replies
+      // inflate by a different amount, so they just reuse the estimate.
+      if (lastFindDirection !== false) {
+        var cand = total - active;
+        if (cand > 0 && (pdfEstTotal === 0 || cand < pdfEstTotal)) pdfEstTotal = cand;
+      }
+      lastFindResult = { active: active, total: pdfEstTotal };
+      findCount.textContent = pdfEstTotal
+        ? (active + ' of ' + pdfEstTotal)
+        : 'No results';
+      return;
+    }
+    lastFindResult.active = active;
+    lastFindResult.total = total;
+    findCount.textContent = total ? (active + ' of ' + total) : 'No results';
   });
   findInput.addEventListener('input', function () {
     if (findDebounce) clearTimeout(findDebounce);
     if (!findInput.value) {
       lastFindQuery = '';
+      lastFindResult = { active: 0, total: 0 };
+      pdfEstTotal = 0;
       findCount.textContent = '';
       if (state.activeId) window.api.findStop(state.activeId);
       return;
@@ -825,8 +1228,8 @@
     // Search live as you type, lightly debounced so fast typing doesn't
     // fire a findInPage call on every single keystroke.
     findDebounce = setTimeout(function () {
-      lastFindQuery = findInput.value; // a fresh query always restarts, never "advances"
-      if (state.activeId) window.api.findStart(state.activeId, findInput.value, true);
+      // A fresh query always restarts the session, never "advances".
+      if (state.activeId) startFind(findInput.value, true);
     }, 120);
   });
   findInput.addEventListener('keydown', function (e) {

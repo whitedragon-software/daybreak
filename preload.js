@@ -1,8 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // tabs
-  createTab: (url) => ipcRenderer.invoke('tabs:create', url),
+  // tabs — privacy is a WINDOW property, not a per-tab option: a tab is
+  // private when it belongs to a private window. createPrivateWindow is
+  // the incognito entry point (menu item / Ctrl+Shift+N) and opens a
+  // whole separate window whose tabs are all private by construction.
+  // opts: { pinned, background } — background opens the tab without
+  // switching to it (bookmark middle-click / Ctrl+click).
+  createTab: (url, opts) => ipcRenderer.invoke('tabs:create', url, opts),
+  createPrivateWindow: () => ipcRenderer.invoke('win:newPrivateWindow'),
   switchTab: (id) => ipcRenderer.invoke('tabs:switch', id),
   closeTab: (id) => ipcRenderer.invoke('tabs:close', id),
   closeOtherTabs: (id) => ipcRenderer.invoke('tabs:closeOthers', id),
@@ -28,6 +34,14 @@ contextBridge.exposeInMainWorld('api', {
   // reserve extra overlay height for a floating menu/find-bar (see main.js)
   setOverlayExtra: (px) => ipcRenderer.send('ui:setOverlayExtra', px),
 
+  // a mousedown landed on the PAGE (relayed via tab-preload.js and
+  // main.js) — the overlay's floating menus should close
+  onUiClickAway: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('ui:click-away', listener);
+    return () => ipcRenderer.removeListener('ui:click-away', listener);
+  },
+
   // manual window drag (fire-and-forget for smooth tracking)
   getWindowPosition: () => ipcRenderer.invoke('win:getPosition'),
   setWindowPosition: (x, y) => ipcRenderer.send('win:setPosition', { x, y }),
@@ -49,6 +63,9 @@ contextBridge.exposeInMainWorld('api', {
   addBookmark: (url, title, favicon) => ipcRenderer.invoke('bookmarks:add', { url, title, favicon }),
   removeBookmark: (id) => ipcRenderer.invoke('bookmarks:remove', id),
   removeBookmarkByUrl: (url) => ipcRenderer.invoke('bookmarks:removeByUrl', url),
+  // bookmark chip right-click: rename / re-URL, and drag-to-reorder
+  updateBookmark: (id, patch) => ipcRenderer.invoke('bookmarks:update', { id, patch }),
+  reorderBookmarks: (orderedIds) => ipcRenderer.send('bookmarks:reorder', orderedIds),
 
   // settings (adBlockEnabled lives in here too — see settings:get/set in main.js)
   getSettings: () => ipcRenderer.invoke('settings:get'),
