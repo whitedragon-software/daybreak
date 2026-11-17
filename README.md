@@ -485,3 +485,4 @@ index.html                 → the overlay: tab strip (drag reorder, wheel
 pages.js                   → generators for the daybreak:// pages (incl.
                              error pages) + APPS hub
 2FA.html                   → self-contained TOTP authenticator app
+```
