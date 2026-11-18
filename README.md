@@ -1,11 +1,11 @@
 # Daybreak
 
-A minimal multi-window desktop browser built on Electron's BaseWindow and
-WebContentsView APIs — frameless windows with a custom tab strip and
-address bar, real per-tab browsing contexts (not iframes), a small set of
-internal pages (bookmarks, history, downloads, settings, apps, performance,
-about) served from a genuine registered `daybreak://` protocol, and
-Chrome-style private (incognito) windows.
+A minimal multi-tab desktop browser built on Electron's BaseWindow and
+WebContentsView APIs — a frameless window with a custom tab strip and
+address bar, real per-tab browsing contexts (not iframes), and a small set
+of internal pages (bookmarks, history, downloads, settings, apps,
+performance, about) served from a genuine registered `daybreak://`
+protocol.
 
 ---
 
@@ -13,21 +13,14 @@ Chrome-style private (incognito) windows.
 
 - `package.json` — app manifest, start script, Electron dependency
 - `main.js` — main process: window and tab lifecycle, layout, ad blocker,
-  downloads, bookmarks/history/settings persistence, JSON export/import
-  for bookmarks and history, all IPC handlers
+  downloads, bookmarks/history/settings persistence, all IPC handlers
 - `preload.js` — context-bridge API exposed to the overlay UI (`window.api`)
 - `tab-preload.js` — restricted context-bridge exposed only to internal
-  `daybreak://` pages (`window.internalAPI`); regular websites never see it.
-  It also relays a bare mousedown from every page so the toolbar can close
-  its floating menus when you click the page (see "Why the overlay doesn't
-  cover the whole window"), and carries the error-page actions (retry,
-  accept certificate), the export/import actions and the New Tab tile
-  preferences (hide/restore/reorder) back to the main process
+  `daybreak://` pages (`window.internalAPI`); regular websites never see it
 - `pages.js` — HTML generators for the internal pages: new tab, bookmarks,
-  history, downloads, settings, about, apps, performance, view source,
-  error pages
-- `index.html` — the overlay UI itself: tab strip, address bar, bookmarks
-  bar, menus, find bar
+  history, downloads, settings, about, apps, performance, view source
+- `index.html` — the overlay UI itself: tab strip, address bar, menus,
+  find bar
 - `2FA.html` — a self-contained bundled app (local TOTP authenticator),
   served as-is at `daybreak://2FA`; the first entry in the Apps hub
 - `CHANGELOG.md` — version history
@@ -38,96 +31,20 @@ Chrome-style private (incognito) windows.
 
 ### Window architecture
 
-Every browser window — normal or private — is a fully self-contained state
-object: its own `BaseWindow` (`frame: false`), its own toolbar overlay, its
-own tab map and active tab. Nothing browser-related is global, so a private
-window and a normal window can live side by side without ever sharing tabs,
-sessions, or UI state. A window is a stack of child `WebContentsView`
+The window is a `BaseWindow` (`frame: false`), not a `BrowserWindow` — it
+has no web content of its own, only a stack of child `WebContentsView`
 instances:
 
 - **The overlay** — one `WebContentsView` loading `index.html`, holding
-  the entire custom UI (tab strip, address bar, bookmarks bar, menus). It
-  is always kept on top in z-order (every tab view is inserted *below* it,
-  at index 0, rather than the overlay being raised above them) and normally
-  covers only the toolbar strip at the top of the window, not the full page
-  area.
+  the entire custom UI (tab strip, address bar, menus). It is always kept
+  on top in z-order (every tab view is inserted *below* it, at index 0,
+  rather than the overlay being raised above them) and normally covers
+  only the toolbar strip at the top of the window, not the full page area.
 - **One WebContentsView per tab** — a real, independent browsing context
   with its own navigation history, not an iframe embedded inside another
   page. Only the active tab's view is given nonzero bounds; inactive tabs
   are resized to zero rather than removed, so they keep running in the
   background.
-
-### Private (incognito) windows
-
-"New private window" in the main menu, or `Ctrl+Shift+N` from anywhere,
-opens a whole separate window whose tabs are all private by construction —
-there is no per-tab privacy flag anywhere.
-
-- Every tab in a private window uses an in-memory session partition
-  (`session.fromPartition` without `persist:`): cookies, cache,
-  localStorage and service workers exist only for the current app run and
-  are never written to disk.
-- Private tabs are never recorded in history, never enter the
-  reopen-closed-tab list (`Ctrl+Shift+T` inside a private window is a
-  deliberate no-op), and never take part in session restore.
-- Downloads made in a private window are tracked for the current session
-  (the downloads page still shows them) but are filtered out of
-  `downloads.json`.
-- Private windows use dark chrome in both themes and show a "Private"
-  badge in the tab row, like Chrome's incognito UI.
-- When the **last** private window closes, the in-memory partition is
-  wiped immediately (storage data + cache), so the next private window
-  starts completely clean.
-- The ad blocker and the `daybreak://` protocol handler are attached to
-  the private session too — internal pages work identically there.
-
-### Bookmarks bar
-
-The bar behaves like Chrome's:
-
-- **Chips are capped at 200px** and the label ellipsizes — a bookmark with
-  a very long name can no longer swallow the whole bar. The full URL is
-  always available as the chip's tooltip.
-- **Left click** navigates the current tab. **Middle click** or
-  **Ctrl/Cmd+click** opens the bookmark in a new *background* tab. With no
-  active tab, a plain click opens a new tab.
-- **Right click** opens a chip menu: Open in new tab, Open in background
-  tab, Edit bookmark…, Delete.
-- **Drag to reorder** — hold a chip, move past a 5px threshold, and the
-  bar reorders live under the cursor; the new order is persisted to
-  `bookmarks.json` on drop.
-- **Edit bookmark…** opens a small dialog anchored under the chip with
-  Name and URL fields. The URL is resolved with the same rules as the
-  address bar (typing `example.com` becomes `https://example.com`), an
-  emptied name falls back to the URL, `Enter` saves and `Escape` cancels.
-- The bar is toggled with "Show bookmarks bar" in the main menu; the
-  setting applies to every open window.
-
-### Frequently visited tiles
-
-The New Tab page's "Frequently visited" grid is a managed view of the
-bookmarks list — the newest 9 bookmarks become tiles — with the same kind
-of control the bookmarks bar offers, without the bar itself being affected:
-
-- **Left click** opens the site in the current tab; **middle click** or
-  **Ctrl/Cmd+click** opens it in a new background tab, like the bar chips.
-- **Right click** opens a tile menu: Open, Open in background tab,
-  Edit tile…, Hide from New Tab.
-- **Edit tile…** uses the same conventions as the bookmark editor — the
-  URL is resolved with the address-bar rules and an emptied name falls
-  back to the URL — and it edits the underlying bookmark, so the bookmarks
-  bar and the star state stay in sync.
-- **Hide from New Tab** removes a tile from the grid without deleting the
-  bookmark (the same non-destructive contract as Chrome's most-visited
-  tiles). A "Show hidden tiles (N)" control appears under the grid while
-  anything is hidden and brings them all back.
-- **Drag to reorder** the grid; the order persists in `settings.json`
-  (`tileOrder`) and never touches bookmarks-bar order. Tiles the user
-  didn't place keep the newest-first order behind the placed ones.
-
-Tile preferences (`hiddenTiles`, `tileOrder`) are keyed by bookmark URL:
-they are pruned when the bookmark is removed and carried over when its URL
-is edited, so a renamed bookmark doesn't lose its place.
 
 ### Why the overlay doesn't cover the whole window
 
@@ -137,20 +54,10 @@ through to the tab underneath wherever the overlay wasn't drawing actual
 UI. `WebContentsView` has no such method — only `BrowserWindow` does — so
 that approach is not available here. The overlay is therefore sized to
 the toolbar only, and any floating UI that needs to paint below that edge
-(the main dropdown menu, the context menus, the bookmark editor, the find
-bar) works by temporarily growing the overlay's own bounds just enough to
-fit that one element — measured with `getBoundingClientRect()`, not a
-guessed constant, so it can't silently start clipping again if a menu
-gains more items later.
-
-Because clicks on the page below the grown overlay never reach the
-overlay's document, every tab relays a bare `mousedown` event through
-`tab-preload.js` and main.js back to its window's overlay
-(`ui:click-away`), so the menus behave like Chrome's: clicking anywhere on
-the page closes them. The find bar deliberately survives page clicks, and
-its reserved space is kept while it is open. Menus also cap their height
-to the real space below their anchor and scroll internally, so a very
-flat window scrolls them instead of clipping them.
+(the main dropdown menu, the tab right-click menu, the find bar) works by
+temporarily growing the overlay's own bounds just enough to fit that one
+element — measured with `getBoundingClientRect()`, not a guessed constant,
+so it can't silently start clipping again if a menu gains more items later.
 
 ### Dragging and resizing
 
@@ -169,92 +76,12 @@ mechanism available to build a custom set of edge/corner handles.
 
 `daybreak://` is registered as a real, privileged scheme (`newtab`,
 `bookmarks`, `history`, `downloads`, `settings`, `about`, `apps`,
-`performance`, `view-source`, `2FA`), handled by `protocol.handle` in the
-main process — the same mechanism a browser would use for its own
-`chrome://`-style pages, not a special-cased string inside a tab. The
-handler is attached to the default session *and* the private session, so
-internal pages work inside private windows too. Each tab's
-`WebContentsView` loads `tab-preload.js`, which only exposes
-`window.internalAPI` when `location.protocol === 'daybreak:'` — an
-ordinary website loaded in a tab never gets access to bookmarks, history,
-or settings, regardless of what it tries to call.
-
-### Error pages
-
-A failed navigation renders a Chrome-style error page inside the tab
-instead of failing silently (previously the error existed only in the
-terminal and the tab stayed blank). All of these have one:
-
-- Timeouts, dead DNS, refused/reset connections, empty responses, redirect
-  loops, unreachable addresses, file errors, proxy failures — each with
-  Chrome-parity wording for its error code and the numeric `net::ERR_*`
-  code shown.
-- "No internet" when the machine is offline, and "This page has been
-  blocked" when the ad blocker stopped a main-frame navigation to a
-  block-listed host.
-- "Your connection is not private" for certificate problems, with a Details
-  section and an explicit "Proceed to <host> (unsafe)" action. The exception
-  is bound to the exact host + certificate fingerprint that was actually
-  denied and lasts for the current app run only — nothing is pre-accepted,
-  nothing persists to disk. TLS protocol errors get no bypass.
-- "Aw, Snap!" when a tab's renderer crashes (out of memory, killed, …),
-  with the reason shown and a working Reload.
-
-The failed URL stays in the address bar and the tab strip, like Chrome; the
-error page itself lives at `daybreak://error?…` and never enters history.
-Reload — toolbar button, `Ctrl+R`, right-click menu, or the page's own
-Reload button — retries the URL that failed, not the error page. Enter
-retries and Escape goes back. Error pages work identically in private
-windows (they are ordinary `daybreak://` pages, so the private session
-serves them too).
-
-"Go back" on an error page — the page's own button, the toolbar Back
-button, `Alt+Left`, or the right-click menu — returns to the last page
-that actually loaded. This is deliberate: Chromium keeps failed
-navigations in the back/forward list, and every failure also stacks
-another identical `daybreak://error` entry on top, so naive history
-traversal re-runs the dead navigation (or lands on the identical error
-page behind it) and the button feels dead. Daybreak instead remembers
-each tab's last committed URL and goes there in one hop. The button is
-hidden when nothing was loaded behind the failure (e.g. the very first
-navigation of a tab failed), exactly like Chrome; certificate pages keep
-"Back to safety" and fall back to the New Tab page.
-
-### Internal pages and data loading
-
-The generated pages (`bookmarks`, `history`, `downloads`, new tab tiles)
-render their lists through inline scripts that call a shared `escapeHtml`
-helper injected into every page by `shell()`. That helper exists in two
-places on purpose: a main-process copy in `pages.js` for strings baked
-into HTML at build time (view-source content, error-page URLs), and the
-injected renderer copy for strings rendered client-side from IPC data
-(bookmark titles, history rows, download names). Every page-controlled
-string goes through one of them before it can touch markup — these pages
-run with the privileged `internalAPI` bridge, so an unescaped page title
-would be a real vulnerability, not a cosmetic bug.
-
-### Exporting and importing data
-
-Bookmarks and history can be exported to and imported from plain `.json`
-files — a small, fully local backup and transfer story. "Export JSON" and
-"Import JSON" sit on `daybreak://bookmarks` and `daybreak://history`.
-
-- The export is a versioned document: `{ app: "daybreak", kind, version,
-  exportedAt, count, items: [...] }`, pretty-printed and hand-editable,
-  with each item carrying `url`, `title`, `timestamp` (and `favicon` for
-  bookmarks). A bare array of items is accepted on import too, so files
-  from other tools or hand-edited exports work.
-- **Imports are merges, not replacements** — nothing already in the
-  browser is deleted or overwritten. Bookmarks dedupe by URL; history
-  entries dedupe by URL + timestamp and merge chronologically under the
-  same 5000-entry ceiling as browsing. A toast reports how many rows were
-  imported and how many were skipped.
-- Rows without a usable http(s) URL (internal `daybreak://` pages, search
-  strings, other schemes) are skipped rather than imported as dead
-  entries; bare domains are resolved the way the address bar would.
-- The renderer never names file paths: the buttons only ask the main
-  process to show the native save/open dialogs, and all disk access
-  happens there.
+`performance`, `view-source`, `2FA`), handled by `protocol.handle` in the main process — the same mechanism a browser
+would use for its own `chrome://`-style pages, not a special-cased string
+inside a tab. Each tab's `WebContentsView` loads `tab-preload.js`, which
+only exposes `window.internalAPI` when `location.protocol === 'daybreak:'`
+— an ordinary website loaded in a tab never gets access to bookmarks,
+history, or settings, regardless of what it tries to call.
 
 ### Apps
 
@@ -298,8 +125,6 @@ that has been idle for 20 minutes is discarded: its view is destroyed to
 free its process, while its title, URL, and place in the tab strip are
 kept. It reloads automatically when you switch back to it. The active tab,
 pinned tabs, and tabs currently playing audio are never discarded.
-Private-window tabs are discarded and revived just as safely — the view
-is recreated inside the same in-memory partition, so nothing touches disk.
 
 ### Performance page
 
@@ -311,36 +136,14 @@ measure on your own hardware.
 
 ### Ad blocking
 
-Network-level blocking runs through `session.webRequest` on both the
-default session and the private partition, matching request hostnames
-against a curated list of ad and tracking domains, toggleable from
-Settings. A request blocklist alone does not stop a page from opening a
-new window via `window.open()`, which is a separate code path, so each tab
-also has a `setWindowOpenHandler`: known ad hosts are denied, and any other
-`window.open()` opens as a normal Daybreak tab instead of a separate
-native window. A small set of CSS rules also hides common ad containers.
-
----
-
-## Keyboard shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+T` | New tab |
-| `Ctrl+W` | Close tab |
-| `Ctrl+Shift+T` | Reopen closed tab (no-op in private windows) |
-| `Ctrl+Shift+N` | New private window |
-| `Ctrl+L` | Focus the address bar |
-| `Ctrl+F` | Find in page |
-| `Ctrl+D` | Bookmark / unbookmark the current page |
-| `Ctrl+U` | View page source |
-| `Ctrl+R` | Reload |
-| `Ctrl+Shift+D` | Duplicate tab |
-| `Ctrl+Shift+M` | Mute / unmute tab |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
-| `Alt+←` / `Alt+→` | Back / forward |
-| Middle-click a tab | Close tab |
-| Middle-click a bookmark | Open in background tab |
+Network-level blocking runs through `session.defaultSession.webRequest`,
+matching request hostnames against a curated list of ad and tracking
+domains, toggleable from Settings. A request blocklist alone does not stop
+a page from opening a new window via `window.open()`, which is a separate
+code path, so each tab also has a `setWindowOpenHandler`: known ad hosts
+are denied, and any other `window.open()` opens as a normal Daybreak tab
+instead of a separate native window. A small set of CSS rules also hides
+common ad containers.
 
 ---
 
@@ -348,9 +151,9 @@ native window. A small set of CSS rules also hides common ad containers.
 
 ```
 npm install
-npm start           # run from source
+npm start          # run from source
 npm run pack        # unpacked build, for quick local testing
-npm run dist        # packaged installer for the current platform
+npm run dist         # packaged installer for the current platform
 ```
 
 `dist` uses electron-builder with the config in `package.json`'s `build`
@@ -371,10 +174,9 @@ used for the installer or executable icon.
   handling and a small cosmetic rule set. It is not a full filter-list
   engine, so ads served from a page's own first-party domain can still get
   through.
-- Bookmarks are a flat list — there are no folders.
-- Find in page on PDF documents has a known counting quirk when searching
-  backward and wrapping past the first match (it can display "1 of N");
-  forward search and counts are accurate.
+- No multi-window support — a tab cannot currently be dragged out into
+  its own separate window.
+- No separate browsing profiles or incognito mode.
 - Authentication state is per-session only; nothing is synced anywhere.
 
 ---
@@ -382,8 +184,8 @@ used for the installer or executable icon.
 ## Testing checklist
 
 Work through these in order after any change to window/tab management,
-the ad blocker, the bookmarks bar, or the overlay's rendering — each
-targets a specific layer, so a failure narrows down where to look.
+the ad blocker, or the overlay's rendering — each targets a specific
+layer, so a failure narrows down where to look.
 
 | # | Action | What you're checking | Expected result |
 |---|---|---|---|
@@ -392,44 +194,19 @@ targets a specific layer, so a failure narrows down where to look.
 | 3 | Drag the tab row to move the window | Manual drag | Window follows the cursor smoothly with no jump or resize; releasing leaves it exactly where dropped. |
 | 4 | Resize from a window edge | Native resize | Window resizes normally; tab content and toolbar reflow to the new size. |
 | 5 | Open the main menu (⋮), then right-click a tab | Floating UI | Both menus render fully on-screen, never clipped at the bottom, regardless of window height. |
-| 6 | With a menu open, click somewhere on the page | Click-away | The menu closes; no dead strip of the page remains unclickable. |
-| 7 | Load a content-heavy page (e.g. a search results page) | State-push coalescing | Tab title/spinner update smoothly; the tab strip does not flicker or repeatedly flash during the load. |
-| 8 | Bookmark a page with a very long title, show the bookmarks bar | Chip truncation | The chip caps at 200px and ellipsizes; hovering shows the URL; the rest of the bar stays usable. |
-| 9 | Left-click, Ctrl+click and middle-click a chip | Chip clicks | Left navigates the current tab; Ctrl/middle open a background tab without switching. |
-| 10 | Right-click a chip | Chip context menu | Open in new tab / Open in background tab / Edit bookmark… / Delete all work. |
-| 11 | Drag a chip sideways and drop it | Chip reorder | Bar reorders live during the drag; order persists after a restart. |
-| 12 | Edit a bookmark, set name to "example.org" and URL to `example.org/edited` | Bookmark editor | Dialog anchors under the chip; URL resolves to `https://example.org/edited`; emptied name falls back to the URL. |
-| 13 | Star a page, open the bookmarks bar, visit `daybreak://bookmarks` | Bookmarks | Entry appears in both places; removing it from the manager updates the star immediately. |
-| 14 | Open a private window (`Ctrl+Shift+N`), visit a few sites | Private windows | Dark chrome + Private badge; nothing appears in history or the reopen list; closing the window wipes cookies (a new private window starts logged out). |
-| 15 | Open a normal window next to the private one | Window isolation | Tabs, sessions and UI state are fully separate; switching windows never mixes tabs. |
-| 16 | Visit `daybreak://history`, `daybreak://downloads`, `daybreak://settings`, `daybreak://about` | Internal pages | Each opens in a new tab (not replacing the current page), renders correctly, and reflects real data. |
-| 17 | Toggle dark mode in Settings | Theming | Overlay and all internal pages switch immediately; ordinary websites are unaffected. |
-| 18 | Toggle the ad blocker off, then on, on a page with ads | Ad blocking | Visible difference in blocked network requests; setting persists across restart. |
-| 19 | Trigger a page that opens a popup ad | Popup handling | No separate ad window appears. |
-| 20 | Drag a tab left/right within its group (pinned or unpinned) | Tab reordering | Tab reorders live during the drag; order persists after dropping. |
-| 21 | Open more tabs than fit in the tab strip, then scroll the wheel over it | Tab overflow | The strip scrolls horizontally, and a newly opened tab is scrolled into view. |
-| 22 | Press `Ctrl+F`, type a word, then press Enter repeatedly | Find in page | Matches highlight as you type; Enter and Next move through the matches. |
-| 23 | Close a tab, then press `Ctrl+Shift+T` | Reopen closed tab | The closed tab comes back at its last URL. |
-| 24 | Turn on Memory Saver, leave a background tab idle for 20 minutes, then click it | Memory Saver | The tab reloads on click and keeps its title and position in the strip. |
-| 25 | Open `daybreak://performance` | Process metrics | Each process lists memory and CPU use, and tab processes show the tab's title. |
-| 26 | Open the Apps hub, then the Authenticator at `daybreak://2FA` | Bundled app | The hub lists the Authenticator and it opens and works offline. |
-| 27 | Visit a domain that doesn't exist (e.g. `https://no-such-host-zzz.invalid`) | DNS error page | "This site can't be reached" page with `net::ERR_NAME_NOT_RESOLVED`; the address bar keeps the failed URL. |
-| 28 | On that error page, press the page's Reload, then `Ctrl+R`, then Enter | Retry paths | All three retry the failed URL (it fails again → same error page, no blank flash); Escape goes back. |
-| 29 | Visit `https://self-signed.badssl.com` | Certificate error page | "Your connection is not private"; Details → Proceed anyway loads the site; after an app restart the exception is gone (warning returns). |
-| 30 | Visit `http://10.255.255.1` (a black-hole address) | Timeout error page | "…took too long to respond" page appears once the connection times out. |
-| 31 | Navigate directly to a host on the ad block list | Blocked page | "This page has been blocked" page names the ad blocker and points at Settings. |
-| 32 | Turn on Memory Saver, leave an error-page tab idle 20 minutes, then click it | Discard + error page | The tab revives, retries the failed URL, and shows the error page again if it still fails. |
-| 33 | With at least one bookmark saved, open `daybreak://bookmarks`; same for `daybreak://history` and `daybreak://downloads` with data | Internal list pages | Each list renders its rows immediately (no permanent "Loading…"); empty lists still show their "No … yet" state. |
-| 34 | On the New Tab page with bookmarks saved | Frequently visited tiles | Up to 9 tiles render from the newest bookmarks. |
-| 35 | From any loaded page, navigate to a dead URL, then click the error page's "Go back" — repeat with the toolbar Back button and `Alt+Left` | Error page back navigation | All three land on the page you came from (not a repeat error page, not a blank tab). |
-| 36 | As the very first action in a brand-new tab, type an unreachable URL | First-load failure | The error page shows with NO "Go back" button (nothing loaded behind the failure); Reload still works. |
-| 37 | On `daybreak://bookmarks`, click Export JSON and save the file | Bookmarks export | A native save dialog proposes `daybreak-bookmarks-<date>.json`; the saved file contains a JSON object with an `items` array holding every bookmark. |
-| 38 | Click Import JSON and pick the file just exported | Bookmarks import dedupe | Toast reports 0 imported with one skipped per bookmark; the list is unchanged. |
-| 39 | Edit the exported file so one item has a new URL and one has a `daybreak://` URL, then import it | Bookmarks import merge | The changed URL is appended as a new bookmark; the `daybreak://` row is skipped. |
-| 40 | On `daybreak://history`, Export JSON, then import the same file | History export/import | Same dialog flow; re-import skips everything as duplicates; rows with a new URL+timestamp merge chronologically. |
-| 41 | On the New Tab page, right-click a tile | Tile menu | Open / Open in background tab / Edit tile… / Hide from New Tab; the background open does not steal focus. |
-| 42 | Edit a tile (rename, fix the URL), then look at the bookmarks bar | Tile edit | Same conventions as the bookmark editor; the bar chip and star state update with it. |
-| 43 | Hide two tiles, drag another to a new position, restart the app | Tile preferences | Hidden tiles stay out of the grid ("Show 2 hidden tiles" restores them); the dragged order survives the restart; the bookmarks bar order is unaffected. |
+| 6 | Load a content-heavy page (e.g. a search results page) | State-push coalescing | Tab title/spinner update smoothly; the tab strip does not flicker or repeatedly flash during the load. |
+| 7 | Star a page, open the bookmarks bar, visit `daybreak://bookmarks` | Bookmarks | Entry appears in both places; removing it from the manager updates the star immediately. |
+| 8 | Visit `daybreak://history`, `daybreak://downloads`, `daybreak://settings`, `daybreak://about` | Internal pages | Each opens in a new tab (not replacing the current page), renders correctly, and reflects real data. |
+| 9 | Toggle dark mode in Settings | Theming | Overlay and all internal pages switch immediately; ordinary websites are unaffected. |
+| 10 | Toggle the ad blocker off, then on, on a page with ads | Ad blocking | Visible difference in blocked network requests; setting persists across restart. |
+| 11 | Trigger a page that opens a popup ad | Popup handling | No separate ad window appears. |
+| 12 | Drag a tab left/right within its group (pinned or unpinned) | Tab reordering | Tab reorders live during the drag; order persists after dropping. |
+| 13 | Open more tabs than fit in the tab strip, then scroll the wheel over it | Tab overflow | The strip scrolls horizontally, and a newly opened tab is scrolled into view. |
+| 14 | Press `Ctrl+F`, type a word, then press Enter repeatedly | Find in page | Matches highlight as you type; Enter and Next move through the matches. |
+| 15 | Close a tab, then press `Ctrl+Shift+T` | Reopen closed tab | The closed tab comes back at its last URL. |
+| 16 | Turn on Memory Saver, leave a background tab idle for 20 minutes, then click it | Memory Saver | The tab reloads on click and keeps its title and position in the strip. |
+| 17 | Open `daybreak://performance` | Process metrics | Each process lists memory and CPU use, and tab processes show the tab's title. |
+| 18 | Open the Apps hub, then the Authenticator at `daybreak://2FA` | Bundled app | The hub lists the Authenticator and it opens and works offline. |
 
 ---
 
@@ -439,50 +216,13 @@ targets a specific layer, so a failure narrows down where to look.
 main.js
 ├─ persisted data          → bookmarks.json, history.json, downloads.json,
 │                             settings.json in Electron's userData folder
-│                             (private-session downloads are filtered out
-│                             of downloads.json; settings.json also holds
-│                             the New Tab tile preferences)
-├─ windows[]               → one state object per window: BaseWindow,
-│                             overlay view, tab map, active tab, layout
-│                             cache (normal and private alike)
-├─ layout(st)              → overlay + active tab view bounds, per window
-│                             resize; overlayExtra reserves space for
-│                             floating UI
-├─ createTab(st, url, o)   → tab lifecycle; opts.pinned / opts.background
-├─ closeTab / duplicateTab → per-window tab operations, reopen list
-├─ attachTabListeners()    → per-tab events, popup handling, favicons, audio
-├─ discardTab / reviveTab  → opt-in Memory Saver (in-memory partition is
-│                             preserved across discard/revive)
-├─ getPrivateSes()         → the in-memory incognito partition; wiped when
-│                             the last private window closes
-├─ setAdBlockerActive()    → webRequest-based hostname blocking, attached
-│                             to the default session AND the private one
-├─ buildPageContextMenu()  → native right-click menu for page content
-├─ protocol.handle()       → serves the daybreak:// internal pages
-│                             (default session and private session)
-└─ ipcMain handlers        → tabs, navigation, window controls, drag,
-                              bookmarks (add/update/remove/reorder), history,
-                              downloads, settings, find, zoom, process
-                              metrics, overlay extra height, page click-away,
-                              JSON export/import (bookmarks & history),
-                              New Tab tile preferences, error pages
-                              (retry, certificate exceptions)
-
-preload.js                 → window.api bridge for the overlay UI (toolbar,
-                             bookmarks bar, menus, find bar)
-
-tab-preload.js             → window.internalAPI for daybreak:// pages only;
-                             plus the page mousedown relay that closes the
-                             toolbar's floating menus on page clicks, and
-                             the action bridge for error pages, export/
-                             import and New Tab tile preferences
-
-index.html                 → the overlay: tab strip (drag reorder, wheel
-                             scroll), address bar, bookmarks bar (200px
-                             chips, click/middle/ctrl click, right-click
-                             menu, editor, drag reorder), menus, find bar
-
-pages.js                   → generators for the daybreak:// pages (incl.
-                             error pages) + APPS hub
-2FA.html                   → self-contained TOTP authenticator app
-```
+├─ layout()                 → overlay + active tab view bounds, per window resize
+├─ createTab / closeTab     → tab lifecycle, pinning, duplication, reordering
+├─ attachTabListeners()     → per-tab events, popup handling, favicons, audio
+├─ discardTab / reviveTab   → opt-in Memory Saver
+├─ setupAdBlocker()         → webRequest-based hostname blocking
+├─ buildPageContextMenu()   → native right-click menu for page content
+├─ protocol.handle()        → serves the daybreak:// internal pages
+└─ ipcMain handlers         → tabs, navigation, window controls, drag,
+                              bookmarks, history, downloads, settings,
+                              find, zoom, process metrics

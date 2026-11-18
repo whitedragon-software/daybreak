@@ -11,6 +11,25 @@
 
 const pkg = require('./package.json');
 
+// Developer identity shown on the About page. The author / organization
+// fields in package.json are the source of truth — aboutPage() reads those
+// first and only falls back to these constants when a field is missing,
+// so the package metadata and the rendered credits cannot drift apart.
+const DEVELOPER = { name: 'WhiteDragon303', url: 'https://github.com/whitedragon303' };
+const ORGANIZATION = { name: 'WhiteDragon Software', url: 'https://github.com/whitedragon-software' };
+const SOURCE_CODE = { name: 'github.com/whitedragon-software/daybreak', url: 'https://github.com/whitedragon-software/daybreak' };
+
+// Normalizes a package.json author-style field: npm allows it to be either
+// a plain string ("Name") or an object ({ name, url }). `fallback` supplies
+// whatever the field itself does not carry.
+function credit(meta, fallback) {
+  const m = (meta && typeof meta === 'object') ? meta : (meta ? { name: String(meta) } : {});
+  return {
+    name: m.name || fallback.name,
+    url: m.url || fallback.url || ''
+  };
+}
+
 const BASE_STYLE = `
   :root {
     --bg: #ffffff;
@@ -696,6 +715,11 @@ function downloadsPage() {
 }
 
 function aboutPage() {
+  const dev = credit(pkg.author, DEVELOPER);
+  const org = credit(pkg.organization, ORGANIZATION);
+  const link = (c, label) => c.url
+    ? `<a data-ext href="${escapeHtml(c.url)}" title="${escapeHtml(c.url)}" style="color:var(--accent);text-decoration:none">${escapeHtml(label || c.name)}</a>`
+    : `<span style="color:var(--text-dim)">${escapeHtml(c.name || '—')}</span>`;
   const body = `
     <div style="text-align:center;padding-top:8vh">
       <div style="width:40px;height:40px;border-radius:50%;border:2px solid var(--accent);
@@ -708,17 +732,50 @@ function aboutPage() {
         Node ${process.versions.node || '—'}
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:24px">
-        Developer: <a href="https://github.com/whitedragon-software" target="_blank" style="color:var(--accent);text-decoration:none">${pkg.author || '—'}</a>
+        Developer: ${link(dev)}
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-        <a href="https://whitedragon.software" target="_blank" style="color:var(--accent);text-decoration:none">whitedragon.software</a>
+        Organization: ${link(org)}
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-        Source code: <a href="https://github.com/whitedragon-software/daybreak" target="_blank" style="color:var(--accent);text-decoration:none">github.com/whitedragon-software/daybreak</a>
+        Source code: ${link(SOURCE_CODE, SOURCE_CODE.name)}
       </div>
     </div>
   `;
-  return shell('About', body, '');
+  const script = `
+    // Credit links open inside Daybreak, never in the OS default browser:
+    // a plain click opens the URL as a new tab of this window, and middle
+    // click or Ctrl/Cmd+click opens it in the background — the same
+    // contract as the bookmark chips and the New Tab tiles. The wiring
+    // degrades gracefully on purpose: if the tab bridge is missing the
+    // open-tab call (or the main process has no handler for it), the link
+    // falls back to a plain navigation of the current tab, which is still
+    // inside Daybreak — a credit click can never end up doing nothing.
+    (function () {
+      function openCredit(url, background) {
+        if (window.internalAPI && typeof window.internalAPI.openInTab === 'function') {
+          var p = window.internalAPI.openInTab(url, { background: !!background });
+          if (p && typeof p.catch === 'function') {
+            p.catch(function () { window.location.href = url; });
+          }
+          return;
+        }
+        window.location.href = url;
+      }
+      document.querySelectorAll('a[data-ext]').forEach(function (a) {
+        var url = a.getAttribute('href');
+        if (!url) return;
+        a.addEventListener('auxclick', function (e) {
+          if (e.button === 1) { e.preventDefault(); openCredit(url, true); }
+        });
+        a.addEventListener('click', function (e) {
+          e.preventDefault();
+          openCredit(url, e.ctrlKey || e.metaKey);
+        });
+      });
+    })();
+  `;
+  return shell('About', body, script);
 }
 
 // Main-process-side escaper for strings that are baked into page HTML HERE

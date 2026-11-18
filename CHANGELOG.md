@@ -1,6 +1,16 @@
 # Changelog
 
-## 1.2.0 (in development)
+## 1.2.1
+
+### Added
+- Developer and organization credits on `daybreak://about`. The page now lists **Developer: WhiteDragon303** and **Organization: WhiteDragon Software**; both names are real links, and clicking one opens the matching GitHub profile (`github.com/whitedragon303` / `github.com/whitedragon-software`) as a new tab inside Daybreak — never in the OS default browser. Middle click or Ctrl/Cmd+click opens it in a background tab, the same contract as the bookmark chips and the New Tab tiles. The wiring degrades gracefully on purpose: if the running build's tab bridge lacks the open-tab call (or the main process has no handler for it), the credit falls back to a plain navigation of the current tab, which is still inside Daybreak — a credit click can never end up doing nothing.
+- `CHECKLIST.md` — the full functional test checklist as a standalone file: an automated pre-flight section that runs in a terminal before every delivery, grouped manual sections with one row per behavior and its expected result, and a test-run log at the bottom recording what was verified for each version.
+
+### Changed
+- `package.json` metadata now names the actual developer and organization: `author` became an object (`WhiteDragon303` with its GitHub URL) and a matching `organization` field was added (WhiteDragon Software); the Windows installer's publisher name is set to WhiteDragon Software. The About page reads its credits from these fields, so the package metadata and the rendered page cannot drift apart.
+- The About page's previous developer block — a single link under the old name plus a separate website row — was replaced by the Developer / Organization / Source code rows above.
+
+## 1.2.0
 
 ### Added
 - Private (incognito) browsing as separate windows, Chrome-style. "New private window" in the main menu and `Ctrl+Shift+N` from anywhere open a whole second browser window whose tabs are all private by construction.

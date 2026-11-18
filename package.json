@@ -3,7 +3,14 @@
   "productName": "Daybreak",
   "version": "1.2.0",
   "description": "Daybreak — a minimal multi-tab Electron browser shell using BaseWindow + WebContentsView.",
-  "author": "WhiteDragon-software",
+  "author": {
+    "name": "WhiteDragon303",
+    "url": "https://github.com/whitedragon303"
+  },
+  "organization": {
+    "name": "WhiteDragon Software",
+    "url": "https://github.com/whitedragon-software"
+  },
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -31,7 +38,8 @@
       "output": "dist"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "publisherName": "WhiteDragon Software"
     },
     "mac": {
       "target": "dmg"
