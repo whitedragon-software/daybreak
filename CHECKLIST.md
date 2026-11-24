@@ -39,10 +39,11 @@ on a build that could not even boot.
 - [ ] P6. IPC cross-check: every `ipcRenderer.invoke(...)` / `send(...)` channel used by `preload.js` and `tab-preload.js` has a matching `ipcMain.handle(...)` or `ipcMain.on(...)` in `main.js` — the exact bug class that once left the list pages stuck on "Loading…" forever.
 - [ ] P7. Bridge cross-check: every `window.internalAPI.x(...)` call inside the generated pages is exposed by `tab-preload.js`, and every `window.api.x(...)` call in `index.html` is exposed by `preload.js`.
 - [ ] P8. Defaults and handlers are in place: `settings.json` defaults include the New Tab tile preferences (`hiddenTiles`, `tileOrder`), and `main.js` registers `data:export`, `data:import`, `tiles:hide`, `tiles:restore`, `tiles:order`.
+- [ ] P9. Structure check: bookmarks, history, downloads, apps, performance, about, view-source and the error pages all render the shared sidebar (search box where there is a list to filter, page links, section cards); Settings renders its own section sidebar; the New Tab page and `2FA.html` contain no sidebar markup.
 
 ---
 
-## 1. Launch and window chrome (W)
+## 1. Launch and window frame (W)
 
 - [ ] W1. Launch the app — frameless white window, one new-tab tab open, tab strip above the address bar, bookmarks bar per saved setting.
 - [ ] W2. Drag empty tab-row space — window follows the cursor 1:1 with no drift or resize; release leaves it exactly where dropped.
@@ -102,6 +103,7 @@ on a build that could not even boot.
 - [ ] I4. Remove a single history row and "Clear browsing data" — both update the list at once.
 - [ ] I5. Security: bookmark a page whose title is `<img src=x onerror=alert(1)>` — the bookmarks page and the tiles grid render it as plain text; nothing executes (these pages run with the privileged bridge).
 - [ ] I6. Dark mode re-themes every internal page instantly; ordinary websites are unaffected.
+- [ ] I7. Every internal page except New Tab and the 2FA app shows the shared left sidebar — the Daybreak mark, a search box (on pages with a list to filter), one link per page with the current page highlighted — with its content as section cards, and every sidebar link navigates inside Daybreak.
 
 ## 7. Export / import JSON (EI)
 
@@ -123,13 +125,13 @@ on a build that could not even boot.
 - [ ] R6. "Go back" — the page button, toolbar Back and `Alt+Left` all land on the last page that actually loaded (never a repeat error page or a blank tab).
 - [ ] R7. As the very first action in a fresh tab, load an unreachable URL — error page shows with NO "Go back" button; Reload still works.
 - [ ] R8. `https://self-signed.badssl.com` — "Your connection is not private"; Details → "Proceed to … (unsafe)" loads the site; after **restart** the exception is gone (warning returns).
-- [ ] R9. A TLS protocol error offers no bypass at all, like Chrome.
+- [ ] R9. A TLS protocol error offers no bypass at all.
 - [ ] R10. An error page in a private window renders and its retry/back paths work there too.
 - [ ] R11. Error pages never enter history: after back-to-safety, Back does not step onto an error page.
 
 ## 9. Private windows (PV)
 
-- [ ] V1. `Ctrl+Shift+N` — separate window, dark chrome in both themes, "Private" badge in the tab row.
+- [ ] V1. `Ctrl+Shift+N` — separate window, dark toolbar in both themes, "Private" badge in the tab row.
 - [ ] V2. Visit sites, then check `daybreak://history` from a normal window — nothing recorded; reopen list unaffected.
 - [ ] V3. Log into a site in a private window, close it — a new private window starts logged out (in-memory partition wiped on last close).
 - [ ] V4. Download something in a private window — it shows on the downloads page for that session but never lands in `downloads.json`.
@@ -185,11 +187,21 @@ on a build that could not even boot.
 
 ## 17. Settings and persistence (ST)
 
+The page is organized as a fixed left navigation (search box on top, one
+link per section) next to a scrolling column of section cards: Appearance,
+Search engine, On startup, Downloads, Privacy and security, Performance,
+About Daybreak.
+
 - [ ] G1. Every setting (theme, homepage, search engine, bookmarks bar, ad blocker, Memory Saver) persists across **restart**.
-- [ ] G2. Homepage change — new tabs and new windows open on it.
-- [ ] G3. Search engine change — plain-word address-bar entries go to the new engine.
+- [ ] G2. Homepage change (Settings → On startup) — new tabs and new windows open on it; the Reset button returns it to `daybreak://newtab`.
+- [ ] G3. Search engine change (Settings → Search engine radio list) — plain-word address-bar entries go to the new engine.
 - [ ] G4. Theme change re-themes the overlay and all internal pages immediately, in every open window.
 - [ ] G5. Tile preferences live in `settings.json` and survive **restart** (with M5/M6).
+- [ ] G6. Settings search filters as you type: non-matching rows hide, empty sections collapse, a "No settings match your search" state appears when nothing matches; clearing the box or pressing `Escape` restores everything.
+- [ ] G7. Sidebar links highlight the section currently in view while scrolling and smooth-scroll to their section on click.
+- [ ] G8. There is no Save button — flipping a toggle, picking an engine or editing the homepage applies at once in every open window and survives **restart**; a failed save shows a toast instead of failing silently.
+- [ ] G9. The destructive rows (Delete browsing history, Clear list under Downloads) ask for confirmation first, then update the History / Downloads pages; "Open page" opens `daybreak://downloads` as a new tab inside Daybreak.
+- [ ] G10. The About Daybreak section shows the real version and Electron / Chromium / Node lines, and the developer / organization / source-code links match the size of the surrounding text and open inside Daybreak only (the source-code link is labeled "Daybreak", same URL as before).
 
 ## 18. Menus and floating UI (MENU)
 
@@ -203,11 +215,11 @@ on a build that could not even boot.
 ## 19. About page and credits (ABOUT)
 
 - [ ] C1. `daybreak://about` (menu → About Daybreak, or typed URL) shows the version line and the Electron / Chromium / Node versions it really runs on.
-- [ ] C2. The page lists **Developer: WhiteDragon303** and **Organization: WhiteDragon Software**, plus the source-code row.
+- [ ] C2. The page lists **Developer: WhiteDragon303** and **Organization: WhiteDragon Software**, plus the source-code row (the link is labeled "Daybreak" and points at `github.com/whitedragon-software/daybreak`).
 - [ ] C3. Clicking the developer name opens `github.com/whitedragon303` as a NEW tab inside Daybreak — never the OS default browser.
 - [ ] C4. Clicking the organization name opens `github.com/whitedragon-software` the same way.
 - [ ] C5. Middle click or `Ctrl/Cmd+click` on either credit opens it in a background tab, matching chips and tiles.
-- [ ] C6. Credit links are styled in the accent color, carry the URL as a tooltip, and work in both light and dark themes.
+- [ ] C6. Credit links are styled in the accent color, match the size of the surrounding text, carry the URL as a tooltip, and work in both light and dark themes.
 - [ ] C7. The credits match `package.json`: the page reads `author` / `organization` from the package metadata, so renaming there updates the page.
 - [ ] C8. Everything on the About page stays inside Daybreak — no link on it ever hands a URL to the OS.
 
@@ -241,5 +253,5 @@ failed and was fixed before delivery.
 
 | Version | Date | Pre-flight (assistant, terminal) | Manual (desktop) | Regression rows |
 |---|---|---|---|---|
-| 1.2.1 | 2026-11-17 | PASS — P1–P8 all green (4 files syntax-clean; package.json identity fields OK; all 9 page generators render, About contains both credit links with `data-ext`; IPC + bridge cross-checks clean; tile prefs + export/import handlers registered). GUI rows cannot run in the sandbox — desktop pass pending. | desktop finding on the first try | C2/C3: the About page rendered "Developer: [object Object]" with no Organization row because the new `package.json` was applied while `pages.js` stayed on the old copy (the old template interpolates the author object raw, and the old page has no credit click wiring). Fixed by delivering `pages.js` in full and hardening the credit script: if the tab bridge lacks the open-tab call, the credit opens in the current tab inside Daybreak instead of doing nothing. |
-| 1.2.0 | 2026-11-17 | PASS — P1–P8 (equivalent checks run before delivery of export/import and tile management) | pending user run (rows 27–43 of the README checklist) | error-page "Go back" + list-page "Loading…" fixed before delivery |
+| 1.2.0 | 2026-11-18 | PASS — P1–P8 all green (4 files syntax-clean; package.json identity fields OK; all 9 page generators render incl. the rebuilt settings page, About contains both credit links with `data-ext`; IPC + bridge cross-checks clean; tile prefs + export/import handlers registered). GUI rows cannot run in the sandbox — desktop pass pending. | desktop finding on the first try: About page shows "Version 1.2.0 / Electron 45.2.3" and the Developer / Organization / Source code credit rows | C2/C3: the About page rendered "Developer: [object Object]" with no Organization row because the new `package.json` was applied while `pages.js` stayed on the old copy (the old template interpolates the author object raw, and the old page has no credit click wiring). Fixed by delivering `pages.js` in full and hardening the credit script: if the tab bridge lacks the open-tab call, the credit opens in the current tab inside Daybreak instead of doing nothing. Also: an interim version bump to 1.2.1 was reverted — the credits and checklist work ships as part of 1.2.0. Settings redesign re-verified after the rebuild (P3 render + P7 bridge cross-check). |
+| 1.2.0 | 2026-11-22 | PASS — P1–P9 all green (4 files syntax-clean; all 9 generators render; P9 confirms the shared sidebar on bookmarks / history / downloads / apps / performance / about / view-source / error, the section sidebar on Settings, and no sidebar on New Tab or `2FA.html`; export/import + tiles wiring intact; About credits present with 3 `data-ext` anchors; IPC + bridge cross-checks clean). Visual spot-check of the rendered pages done in a headless browser (sidebar, cards, search filtering, credit sizing). GUI rows cannot run in the sandbox — desktop pass pending. | desktop pass pending | none — this pass only moved the internal pages (except New Tab and the 2FA app) onto the shared sidebar structure, sized the About credit rows to the surrounding text, relabeled the source-code link "Daybreak", and condensed the 1.2.0 changelog; preflight was extended with the P9 structure check. |

@@ -1,63 +1,26 @@
 # Changelog
 
-## 1.2.1
-
-### Added
-- Developer and organization credits on `daybreak://about`. The page now lists **Developer: WhiteDragon303** and **Organization: WhiteDragon Software**; both names are real links, and clicking one opens the matching GitHub profile (`github.com/whitedragon303` / `github.com/whitedragon-software`) as a new tab inside Daybreak — never in the OS default browser. Middle click or Ctrl/Cmd+click opens it in a background tab, the same contract as the bookmark chips and the New Tab tiles. The wiring degrades gracefully on purpose: if the running build's tab bridge lacks the open-tab call (or the main process has no handler for it), the credit falls back to a plain navigation of the current tab, which is still inside Daybreak — a credit click can never end up doing nothing.
-- `CHECKLIST.md` — the full functional test checklist as a standalone file: an automated pre-flight section that runs in a terminal before every delivery, grouped manual sections with one row per behavior and its expected result, and a test-run log at the bottom recording what was verified for each version.
-
-### Changed
-- `package.json` metadata now names the actual developer and organization: `author` became an object (`WhiteDragon303` with its GitHub URL) and a matching `organization` field was added (WhiteDragon Software); the Windows installer's publisher name is set to WhiteDragon Software. The About page reads its credits from these fields, so the package metadata and the rendered page cannot drift apart.
-- The About page's previous developer block — a single link under the old name plus a separate website row — was replaced by the Developer / Organization / Source code rows above.
-
 ## 1.2.0
 
 ### Added
-- Private (incognito) browsing as separate windows, Chrome-style. "New private window" in the main menu and `Ctrl+Shift+N` from anywhere open a whole second browser window whose tabs are all private by construction.
-  - Every tab in a private window runs in an in-memory session partition: cookies, cache, localStorage and service workers exist only for the current app run and are never written to disk.
-  - Private tabs are never recorded in history, never enter the reopen-closed-tab list, and never take part in session restore.
-  - Downloads made in a private window stay out of `downloads.json` (they exist only for the current session, on the downloads page).
-  - Private windows use dark chrome in both themes and show a "Private" badge in the tab row, like Chrome's incognito UI.
-  - When the last private window closes, the in-memory partition is wiped immediately, so a new private window starts completely clean.
-- Multi-window support: main.js was refactored from single-window globals to per-window state objects (own tab map, own toolbar overlay, own layout), so normal and private windows can be open side by side and share nothing.
-- Floating menus, the tab right-click menu and the find bar cap their height to the real space below their anchor and scroll internally on flat windows; the window's real content height is now reported to the toolbar for this.
-- Chrome-style bookmarks bar interactions:
-  - Bookmark chips are capped at 200px and the label ellipsizes, so one bookmark with a very long name can no longer swallow the whole bar.
-  - Left click navigates the current tab; middle click or Ctrl/Cmd+click opens the bookmark in a new background tab.
-  - Right-click menu on every chip: Open in new tab, Open in background tab, Edit bookmark…, Delete.
-  - Drag a chip to reorder the bar; the new order persists to `bookmarks.json`.
-  - Edit bookmark… opens a small dialog anchored under the chip (Name + URL); the URL is resolved with the same rules as the address bar and an emptied name falls back to the URL.
-- Chrome-style error pages instead of silent failures. A navigation that times out, can't be resolved, is refused, gets blocked, or whose renderer crashes now renders a full error page inside the tab — previously the failure existed only in the terminal and the tab just stayed blank.
-  - Every main-frame network failure has Chrome-parity wording for its error code ("took too long to respond", "server IP address could not be found", "refused to connect", "No internet connection", "This page has been blocked" for ad-blocker blocks, …), plus the `net::ERR_*` code and the failed URL.
-  - The failed URL stays in the address bar and the tab strip, like Chrome; error pages never enter history.
-  - Reload — toolbar button, Ctrl+R, the page context menu, or the page's own Reload button — retries the URL that failed instead of redrawing the error page. Enter retries and Escape goes back.
-  - Go back on an error page — the page's own button, the toolbar Back button, Alt+Left, or the context menu — returns to the last page that actually loaded. Chromium keeps failed navigations in the back/forward list and each failure stacks another identical error entry on top, so naive history traversal would re-run the dead navigation and the button would feel dead; Daybreak instead remembers each tab's last committed URL and goes there in one hop. The button is hidden when nothing loaded behind the failure (like Chrome), and certificate pages keep "Back to safety" with a New-Tab fallback.
-  - Certificate failures get a "Your connection is not private" page with a Details section and an explicit "Proceed to … (unsafe)" action. Exceptions are bound to the exact host + certificate fingerprint that was actually denied, kept in memory for the current run only, and never granted for sub-frames. TLS protocol errors offer no bypass, like Chrome.
-  - A crashed renderer shows an "Aw, Snap!" page (with the crash reason) and a working Reload; loading the page relaunches the renderer.
-- Dropdown menus now close when you click the page, like Chrome: every tab relays a bare mousedown through `tab-preload.js` and main.js back to its window's toolbar, so clicking away no longer leaves a menu open with a dead strip of overlay over the page.
-- Export and import for Bookmarks and History as plain, versioned `.json` files. "Export JSON" / "Import JSON" on `daybreak://bookmarks` and `daybreak://history` open native save/open dialogs; imports are merges (duplicates are skipped, nothing is deleted or overwritten), rows without a usable http(s) URL are skipped rather than imported as dead entries, and the renderer never names file paths — the main process owns the dialogs and all disk access.
-- The New Tab page's "Frequently visited" tiles are now managed like the bookmarks bar:
-  - Left click opens the site in the current tab; middle click or Ctrl/Cmd+click opens it in a new background tab.
-  - Right-click menu on every tile: Open, Open in background tab, Edit tile…, Hide from New Tab.
-  - Edit tile… follows the same conventions as the bookmark editor (address-bar URL resolution, an emptied name falls back to the URL) and updates the underlying bookmark, so the bar and star state stay in sync.
-  - Hiding a tile is reversible and non-destructive: the bookmark is kept, and a "Show hidden tiles (N)" control on the New Tab page restores them.
-  - Tiles can be dragged to reorder the grid; the order persists in `settings.json` and never affects bookmarks-bar order. Tile preferences are keyed by URL, pruned when the bookmark is removed, and carried over when its URL is edited.
+- Private (incognito) windows (`Ctrl+Shift+N`): every tab in them runs in an in-memory session — cookies, cache and site data never touch disk; private tabs stay out of history, the reopen list and session restore; downloads made there stay out of `downloads.json`; closing the last private window wipes the partition at once.
+- Bookmarks bar interactions: 200px chips with ellipsis, middle click / Ctrl+click opens background tabs, a right-click menu (open, open in background, edit, delete), drag to reorder, and an edit dialog with the address-bar URL rules.
+- Full error pages instead of silent failures: plain wording per error code, the `net::ERR_*` line and the failed URL, a Reload that retries the failed URL, and a "Go back" that jumps to the last page that actually loaded. Certificate failures get a "Your connection is not private" page with Details and an explicit in-memory "proceed" exception; crashed renderers get an "Aw, Snap!" page.
+- Export and import for Bookmarks and History as versioned `.json` files through native dialogs. Imports are merges: duplicates are skipped, rows without a usable http(s) URL are filtered, and the renderer never touches file paths.
+- New Tab tiles managed like the bookmarks bar: click / middle click / Ctrl+click, a right-click menu, an edit action that updates the underlying bookmark, reversible hiding with a "Show hidden tiles" restore, and drag-to-order persisted in `settings.json`.
+- Developer and organization credits — Developer: WhiteDragon303, Organization: WhiteDragon Software, plus the source-code link — on the About page and in Settings. Clicking a credit opens it as a tab inside Daybreak (background on middle click / Ctrl+click); if the tab bridge is unavailable it degrades to a plain navigation, still inside Daybreak.
+- `CHECKLIST.md`: the full functional test checklist with an automated pre-flight section and a test-run log per version.
 
 ### Changed
-- Private browsing was first built per-tab during development, then replaced by the window-level model above: a per-tab privacy flag was found to leak state between private and normal tabs, and window-level privacy removes the leak by construction.
+- All internal pages except the New Tab page and the 2FA app now share one structure: a fixed left navigation (the Daybreak mark, a search box on top, one link per page with the current page highlighted) next to a scrolling column of section cards. Settings keeps its own section links in the sidebar, where search filters rows and collapses empty sections; on every other page the search filters that page's list. No new settings keys — every control maps onto existing `settings.json` fields and handlers.
+- The credit rows now match the size of the surrounding text, and the source-code link is labeled "Daybreak" (same URL as before).
+- `package.json` names the developer (`author`: WhiteDragon303) and the organization (WhiteDragon Software, also the Windows installer publisher); the About page reads its credits from these fields, so page and metadata cannot drift apart.
 
 ### Fixed
-- Find in page on PDF documents. Chromium's built-in PDF viewer silently dropped the first fresh search of a session, inflated the reported match total by +1 on every reply, and reported "past the last match" as an empty result instead of wrapping. Match counts now stay accurate, fresh searches always run forward, and an empty report after known matches restarts the search. Known limitation: on PDFs, searching backward and wrapping past the first match can display "1 of N".
-- Dropdown menus were cut off at the bottom edge on very short windows, with no way to reach the hidden items; they now scroll internally instead.
-- Restoring a minimized window now re-runs layout and repushes window state, so views come back correctly sized.
-- A tab or context menu opened near the right window edge no longer appears half off-screen; it flips back inside.
-- Hardened HTML escaping in the internal pages (`pages.js`): every page-controlled string (titles, URLs, favicons, download filenames — all of which come from web content) now goes through `escapeHtml()` before it enters markup on the new tab, bookmarks, history and downloads pages. These pages run with the privileged `internalAPI` bridge, so markup injected through e.g. a page title would have been a real vulnerability, not a cosmetic bug.
-- Bookmarks, History and Downloads pages hung on "Loading…" forever whenever data existed (and the New Tab page's "Frequently visited" tiles silently rendered nothing). The escaping hardening above had added `escapeHtml()` calls to the pages' client-side scripts but shipped the helper itself only to the main process — with data present the render pass threw "escapeHtml is not defined" and the page kept its loading state (empty lists skipped the helper, which made the breakage look random). The helper is now injected into every internal page's `<script>` block by `shell()`, and a failed theme lookup can no longer take a page's own script down with it.
-- The error page's "Go back" button (and the toolbar Back button, Alt+Left, and the context-menu Back while an error page was showing) could do nothing, return to the identical error page, or re-run the failed navigation: Chromium keeps failed navigations in the back/forward list, so `history.back()` never reliably reached the page the user came from. Back now goes to the tab's last committed URL, skipping every dead entry in one deterministic hop; it is disabled/hidden when nothing was committed behind the failure.
-- Reload on an error page was a silent no-op when the failed or crashed page was one of Daybreak's own internal pages (e.g. a crashed New Tab page): the retry guard rejected all `daybreak://` targets. It now only rejects `daybreak://error` itself, which is the one target that would loop the error page into itself.
-
-### Delivered alongside (documents, not code)
-- A debugging checklist for reproducing and diagnosing reported issues.
+- Find in page on PDF documents: the first fresh search is no longer dropped and match counts stay accurate (backward search can still display "1 of N" when wrapping).
+- Floating menus cap their height to the real space below their anchor and scroll internally on flat windows; clicking the page closes every open menu.
+- Hardened HTML escaping across the internal pages, which also fixes the list pages hanging on "Loading…" whenever data existed.
+- Error-page back and reload edge cases: Back could re-run the dead navigation or land on the same error page again, and Reload refused to retry a crashed internal page.
 
 ## 1.1.0
 
@@ -97,7 +60,7 @@ First public release. Same feature set as 0.9.2.
   Pinned tabs show the site icon instead of a letter.
 
 ### Changed
-- Menu icons are monochrome line icons instead of coloured letter badges.
+- Menu icons are plain line icons instead of coloured letter badges.
 - New tab page redesigned: time-of-day greeting, pill-shaped search box,
   bordered bookmark cards under "Frequently visited".
 - The Authenticator file is now `2FA.html`.
@@ -134,7 +97,7 @@ First public release. Same feature set as 0.9.2.
 
 ### Changed
 - Ad blocklist expanded with ad and sync hosts seen in real traffic.
-- Chromium's console logging is turned down.
+- The rendering engine's console logging is turned down.
 
 ## 0.7.0
 

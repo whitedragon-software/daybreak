@@ -15,9 +15,11 @@ const pkg = require('./package.json');
 // fields in package.json are the source of truth — aboutPage() reads those
 // first and only falls back to these constants when a field is missing,
 // so the package metadata and the rendered credits cannot drift apart.
+// The source-code entry deliberately displays as "Daybreak" (the tooltip
+// and the href carry the real repository URL).
 const DEVELOPER = { name: 'WhiteDragon303', url: 'https://github.com/whitedragon303' };
 const ORGANIZATION = { name: 'WhiteDragon Software', url: 'https://github.com/whitedragon-software' };
-const SOURCE_CODE = { name: 'github.com/whitedragon-software/daybreak', url: 'https://github.com/whitedragon-software/daybreak' };
+const SOURCE_CODE = { name: 'Daybreak', url: 'https://github.com/whitedragon-software/daybreak' };
 
 // Normalizes a package.json author-style field: npm allows it to be either
 // a plain string ("Name") or an object ({ name, url }). `fallback` supplies
@@ -195,6 +197,226 @@ ${script}</script>
 </html>`;
 }
 
+// ------------------------------------------------------------------
+// Shared structure for the internal pages.
+//
+// Every internal page except the New Tab page (which keeps its own
+// centered layout) and the 2FA app (a standalone static file) is built
+// on the same skeleton: a fixed left navigation — the Daybreak mark, a
+// search box on top, one pill link per page with the current page
+// highlighted — next to a single scrolling column of section cards.
+// Settings uses the same visual language but keeps its own sidebar,
+// whose links jump between its sections instead of between pages.
+//
+// The sidebar search live-filters the page: rows marked data-filter are
+// hidden when they don't match, cards marked data-filtergroup collapse
+// when none of their rows are left, and a shared "no results" line
+// appears when nothing matches at all. Pages that re-render their lists
+// (bookmarks, history, downloads, performance) call panelFilter() again
+// after every render — it is defined in the same <script> block, ahead
+// of the page's own code.
+// ------------------------------------------------------------------
+const PANEL_STYLE = `
+  .pn-root { background: #f1f3f4; min-height: 100vh; --card: #ffffff; }
+  body.dark .pn-root { background: #202124; --card: #292a2d; }
+  .pn-nav {
+    position: fixed; top: 0; bottom: 0; left: 0; width: 236px;
+    padding: 14px 8px 20px; overflow-y: auto;
+    background: var(--bg); border-right: 1px solid var(--border);
+  }
+  .pn-brand {
+    display: flex; align-items: center; gap: 9px;
+    padding: 4px 16px 14px; font-size: 13px; font-weight: 600; color: var(--text);
+  }
+  .pn-brand-mark {
+    width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--accent); border-bottom-color: transparent;
+    transform: rotate(-45deg);
+  }
+  .pn-search { position: relative; margin: 0 8px 14px; }
+  .pn-search input {
+    width: 100%; padding: 9px 12px 9px 34px; border: 1px solid transparent;
+    border-radius: 18px; background: #f1f3f4; color: var(--text);
+    font-size: 13px; outline: none;
+  }
+  body.dark .pn-search input { background: var(--hover); }
+  .pn-search input:focus { background: var(--bg); border-color: var(--accent); }
+  .pn-search svg {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; fill: none; stroke: var(--text-dim); stroke-width: 2;
+  }
+  .pn-item {
+    display: block; padding: 9px 16px; margin: 1px 0;
+    border-radius: 0 18px 18px 0; text-decoration: none;
+    color: var(--text-dim); font-size: 13px; line-height: 1.3;
+  }
+  .pn-item:hover { background: var(--hover); color: var(--text); }
+  .pn-item.active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent); font-weight: 600;
+  }
+  .pn-sep { height: 1px; background: var(--border); margin: 12px 14px; }
+  .pn-main { margin-left: 236px; padding: 28px 0 120px; }
+  .pn-col { max-width: 672px; margin: 0 auto; padding: 0 24px; }
+  .p-card { background: var(--card); border-radius: 12px; padding: 4px 0 2px; margin-bottom: 20px; }
+  .p-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px 20px 10px;
+  }
+  .p-head h2 {
+    font-size: 15px; font-weight: 600; margin: 0; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .p-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .p-lede { font-size: 12px; color: var(--text-dim); line-height: 1.5; padding: 0 20px 8px; }
+  .p-row { display: flex; align-items: center; gap: 14px; padding: 11px 20px; border-top: 1px solid var(--border); }
+  .p-row:hover { background: var(--hover); }
+  .p-main { flex: 1; min-width: 0; }
+  .p-title { font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-sub { font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .p-meta { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+  a.p-title-link {
+    color: var(--text); text-decoration: none; min-width: 0; flex: 1;
+    display: flex; align-items: center; gap: 10px;
+  }
+  a.p-title-link:hover { text-decoration: underline; }
+  /* Credit / value columns are sized to match the row titles — an unstyled
+     inline element here would fall back to the browser's default size and
+     render visibly larger than the text around it. */
+  .p-ctl { font-size: 13.5px; color: var(--text); flex-shrink: 0; }
+  .p-logo {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid var(--accent); border-bottom-color: transparent;
+    transform: rotate(-45deg);
+  }
+  .p-pre {
+    white-space: pre-wrap; word-break: break-word; margin: 0;
+    font-family: ui-monospace, Consolas, Menlo, monospace;
+    font-size: 12px; line-height: 1.5; color: var(--text);
+    padding: 14px 20px 16px; border-top: 1px solid var(--border);
+  }
+  button.secondary.danger-text { color: var(--danger); }
+  .pn-hide { display: none !important; }
+  @media (max-width: 760px) {
+    .pn-nav { position: static; width: auto; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    .pn-main { margin-left: 0; }
+  }
+`;
+
+const PANEL_SCRIPT = `
+  // ---- sidebar search: hide non-matching rows ([data-filter]), collapse
+  // cards left without visible rows ([data-filtergroup]), and show the
+  // shared "no results" line when nothing matches. Escape clears.
+  function panelFilter() {
+    var box = document.getElementById('pnSearch');
+    if (!box) return;
+    var q = box.value.trim().toLowerCase();
+    var any = false;
+    document.querySelectorAll('[data-filter]').forEach(function (row) {
+      var hit = !q || row.textContent.toLowerCase().indexOf(q) >= 0;
+      row.classList.toggle('pn-hide', !hit);
+      if (hit) any = true;
+    });
+    document.querySelectorAll('[data-filtergroup]').forEach(function (g) {
+      var empty = !!q && g.querySelectorAll('[data-filter]:not(.pn-hide)').length === 0;
+      g.classList.toggle('pn-hide', empty);
+    });
+    var nr = document.getElementById('pnNoResults');
+    if (nr) nr.classList.toggle('pn-hide', !(q && !any));
+  }
+  (function () {
+    var box = document.getElementById('pnSearch');
+    if (!box) return;
+    box.addEventListener('input', panelFilter);
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { box.value = ''; panelFilter(); box.blur(); }
+    });
+  })();
+
+  // ---- links marked data-ext open inside Daybreak (the shared credit-link
+  // contract): a plain click opens the URL as a new tab of this window,
+  // middle click or Ctrl/Cmd+click opens it in the background, and if the
+  // tab bridge is missing the open-tab call the link falls back to a plain
+  // navigation of the current tab — still inside Daybreak either way.
+  (function () {
+    function openCredit(url, background) {
+      if (window.internalAPI && typeof window.internalAPI.openInTab === 'function') {
+        var p = window.internalAPI.openInTab(url, { background: !!background });
+        if (p && typeof p.catch === 'function') {
+          p.catch(function () { window.location.href = url; });
+        }
+        return;
+      }
+      window.location.href = url;
+    }
+    document.querySelectorAll('a[data-ext]').forEach(function (a) {
+      var url = a.getAttribute('href');
+      if (!url) return;
+      a.addEventListener('auxclick', function (e) {
+        if (e.button === 1) { e.preventDefault(); openCredit(url, true); }
+      });
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        openCredit(url, e.ctrlKey || e.metaKey);
+      });
+    });
+  })();
+`;
+
+// The shared page skeleton. `active` is the nav id of the current page
+// (settings / bookmarks / history / downloads / apps / performance / about);
+// `search` is the sidebar search placeholder — omitted on pages with
+// nothing to filter (view source, error pages).
+function panelShell(opts) {
+  const active = String(opts.active || '');
+  const NAV_ITEMS = [
+    ['settings', 'Settings', 'daybreak://settings'],
+    ['bookmarks', 'Bookmarks', 'daybreak://bookmarks'],
+    ['history', 'History', 'daybreak://history'],
+    ['downloads', 'Downloads', 'daybreak://downloads'],
+    ['apps', 'Apps', 'daybreak://apps'],
+    ['performance', 'Performance', 'daybreak://performance']
+  ];
+  const navHtml = NAV_ITEMS.map((it) =>
+    '<a class="pn-item' + (it[0] === active ? ' active' : '') + '" href="' + it[2] + '">' + it[1] + '</a>'
+  ).join('') +
+    '<div class="pn-sep"></div>' +
+    '<a class="pn-item' + (active === 'about' ? ' active' : '') + '" href="daybreak://about">About Daybreak</a>';
+  const searchHtml = opts.search
+    ? '<div class="pn-search">' +
+      '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>' +
+      '<input type="search" id="pnSearch" placeholder="' + escapeHtml(opts.search) + '" autocomplete="off" aria-label="' + escapeHtml(opts.search) + '">' +
+      '</div>'
+    : '';
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${opts.title} — Daybreak</title>
+<style>${BASE_STYLE}${PANEL_STYLE}</style>
+</head>
+<body>
+<div class="pn-root">
+<aside class="pn-nav">
+  <div class="pn-brand"><span class="pn-brand-mark" aria-hidden="true"></span>Daybreak</div>
+  ${searchHtml}
+  <nav aria-label="Daybreak pages">${navHtml}</nav>
+</aside>
+<main class="pn-main">
+<div class="pn-col">
+${opts.body || ''}
+</div>
+</main>
+</div>
+<div id="toast"></div>
+<script>${SCRIPT_COMMON}
+${THEME_INIT}
+${PANEL_SCRIPT}
+${opts.script || ''}</script>
+</body>
+</html>`;
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -315,8 +537,8 @@ function newTabPage() {
     // the bookmarks bar chips: left click opens the site in this tab,
     // middle click / Ctrl+click open a background tab, right click opens a
     // tile menu, and dragging reorders the grid. Hiding never deletes the
-    // bookmark itself — "Show hidden tiles" brings everything back, which
-    // is the same contract Chrome offers for its most-visited tiles.
+    // bookmark itself — "Show hidden tiles" brings everything back. Hiding
+    // is non-destructive by design, exactly like the bookmarks bar chips.
     var tileData = { bookmarks: [], settings: {} };
     var dragEl = null;
 
@@ -505,29 +727,41 @@ function newTabPage() {
 
 function bookmarksPage() {
   const body = `
-    <h1>Bookmarks</h1>
-    <div class="toolbar">
-      <button class="secondary" id="exportBtn">Export JSON</button>
-      <button class="secondary" id="importBtn">Import JSON</button>
-    </div>
-    <div id="list"><div class="empty">Loading…</div></div>
+    <section class="p-card" data-filtergroup>
+      <div class="p-head">
+        <h2>Bookmarks</h2>
+        <div class="p-actions">
+          <button class="secondary" id="exportBtn">Export JSON</button>
+          <button class="secondary" id="importBtn">Import JSON</button>
+        </div>
+      </div>
+      <div id="list"><div class="empty">Loading…</div></div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching bookmarks</div>
   `;
   const script = `
     function render(list) {
       var el = document.getElementById('list');
-      if (!list.length) { el.innerHTML = '<div class="empty">No bookmarks yet</div>'; return; }
-      el.innerHTML = list.slice().reverse().map(function (b) {
-        var icon = b.favicon
-          ? '<img src="' + escapeHtml(b.favicon) + '" alt="" style="width:16px;height:16px;border-radius:3px;flex-shrink:0" onerror="this.remove()">'
-          : '<span style="width:16px;height:16px;border-radius:3px;flex-shrink:0;background:var(--border);display:inline-block"></span>';
-        return '<div class="row"><div class="main" style="display:flex;align-items:center;gap:10px"><a class="title-link" style="display:flex;align-items:center;gap:10px;min-width:0;flex:1" href="' + escapeHtml(b.url) + '">' + icon + '<span style="min-width:0"><div class="title">' + escapeHtml(b.title || b.url) + '</div><div class="url">' + escapeHtml(b.url) + '</div></span></a></div>' +
-          '<button class="icon-btn" data-id="' + escapeHtml(b.id) + '">Remove</button></div>';
-      }).join('');
-      el.querySelectorAll('button[data-id]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          window.internalAPI.removeBookmark(btn.getAttribute('data-id')).then(render);
+      if (!list.length) {
+        el.innerHTML = '<div class="empty">No bookmarks yet</div>';
+      } else {
+        el.innerHTML = list.slice().reverse().map(function (b) {
+          var icon = b.favicon
+            ? '<img src="' + escapeHtml(b.favicon) + '" alt="" style="width:16px;height:16px;border-radius:3px;flex-shrink:0" onerror="this.remove()">'
+            : '<span style="width:16px;height:16px;border-radius:3px;flex-shrink:0;background:var(--border);display:inline-block"></span>';
+          return '<div class="p-row" data-filter>' +
+            '<a class="p-title-link" href="' + escapeHtml(b.url) + '">' + icon +
+            '<span style="min-width:0"><div class="p-title">' + escapeHtml(b.title || b.url) + '</div>' +
+            '<div class="p-sub">' + escapeHtml(b.url) + '</div></span></a>' +
+            '<button class="icon-btn" data-id="' + escapeHtml(b.id) + '">Remove</button></div>';
+        }).join('');
+        el.querySelectorAll('button[data-id]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            window.internalAPI.removeBookmark(btn.getAttribute('data-id')).then(render);
+          });
         });
-      });
+      }
+      panelFilter();
     }
     window.internalAPI.getBookmarks().then(render);
     document.getElementById('exportBtn').addEventListener('click', function () {
@@ -545,42 +779,51 @@ function bookmarksPage() {
       });
     });
   `;
-  return shell('Bookmarks', body, script);
+  return panelShell({ title: 'Bookmarks', active: 'bookmarks', search: 'Search bookmarks', body: body, script: script });
 }
 
 function historyPage() {
   const body = `
-    <h1>History</h1>
-    <div class="toolbar">
-      <input type="search" id="filter" placeholder="Search history">
-      <button class="secondary" id="exportBtn">Export JSON</button>
-      <button class="secondary" id="importBtn">Import JSON</button>
-      <button class="action danger" id="clearBtn">Clear all</button>
-    </div>
-    <div id="list"><div class="empty">Loading…</div></div>
+    <section class="p-card" data-filtergroup>
+      <div class="p-head">
+        <h2>History</h2>
+        <div class="p-actions">
+          <button class="secondary" id="exportBtn">Export JSON</button>
+          <button class="secondary" id="importBtn">Import JSON</button>
+          <button class="secondary danger-text" id="clearBtn">Clear all</button>
+        </div>
+      </div>
+      <div id="list"><div class="empty">Loading…</div></div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching history</div>
   `;
   const script = `
     var all = [];
+    // The sidebar search box (panelFilter) filters these rows live by their
+    // text — title, URL and timestamp.
     function render(list) {
       var el = document.getElementById('list');
-      if (!list.length) { el.innerHTML = '<div class="empty">No history yet</div>'; return; }
-      el.innerHTML = list.slice().reverse().map(function (h) {
-        var date = new Date(h.timestamp);
-        return '<div class="row"><div class="main"><a class="title-link" href="' + escapeHtml(h.url) + '"><div class="title">' + escapeHtml(h.title || h.url) + '</div><div class="url">' + escapeHtml(h.url) + '</div></a></div>' +
-          '<span class="meta">' + date.toLocaleString() + '</span>' +
-          '<button class="icon-btn" data-id="' + escapeHtml(h.id) + '">Remove</button></div>';
-      }).join('');
-      el.querySelectorAll('button[data-id]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          window.internalAPI.removeHistory(btn.getAttribute('data-id')).then(function (list) { all = list; render(all); });
+      if (!list.length) {
+        el.innerHTML = '<div class="empty">No history yet</div>';
+      } else {
+        el.innerHTML = list.slice().reverse().map(function (h) {
+          var date = new Date(h.timestamp);
+          return '<div class="p-row" data-filter>' +
+            '<a class="p-title-link" href="' + escapeHtml(h.url) + '"><span style="min-width:0">' +
+            '<div class="p-title">' + escapeHtml(h.title || h.url) + '</div>' +
+            '<div class="p-sub">' + escapeHtml(h.url) + '</div></span></a>' +
+            '<span class="p-meta">' + date.toLocaleString() + '</span>' +
+            '<button class="icon-btn" data-id="' + escapeHtml(h.id) + '">Remove</button></div>';
+        }).join('');
+        el.querySelectorAll('button[data-id]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            window.internalAPI.removeHistory(btn.getAttribute('data-id')).then(function (list) { all = list; render(all); });
+          });
         });
-      });
+      }
+      panelFilter();
     }
     window.internalAPI.getHistory().then(function (list) { all = list; render(all); });
-    document.getElementById('filter').addEventListener('input', function (e) {
-      var q = e.target.value.toLowerCase();
-      render(all.filter(function (h) { return (h.title || '').toLowerCase().indexOf(q) >= 0 || h.url.toLowerCase().indexOf(q) >= 0; }));
-    });
     document.getElementById('clearBtn').addEventListener('click', function () {
       window.internalAPI.clearHistory().then(function () { all = []; render(all); });
     });
@@ -599,162 +842,410 @@ function historyPage() {
       });
     });
   `;
-  return shell('History', body, script);
+  return panelShell({ title: 'History', active: 'history', search: 'Search history', body: body, script: script });
 }
 
+// Settings — built like a desktop browser's settings home: a fixed left
+// navigation (search box on top, one link per section) next to a single
+// scrolling column of section cards. Sections: Appearance, Search engine,
+// On startup, Downloads, Privacy and security, Performance, About Daybreak.
+// Every other internal page (except the New Tab page and the 2FA app)
+// shares the same visual language through panelShell() — sidebar with a
+// search box and page links on the left, section cards on the right — but
+// only Settings' sidebar links jump between its own sections.
+// Every control saves the instant it changes (there is no Save button) —
+// main.js re-layouts every window and re-pushes state on settings:set, so
+// theme, bookmarks-bar and ad-blocker changes land everywhere at once.
+// Each control maps onto an existing settings.json key, so this page adds
+// no new IPC and no new persistence:
+//   theme, showBookmarksBar → Appearance
+//   searchEngine            → Search engine (radio list)
+//   homepage                → On startup
+//   adBlockEnabled          → Privacy and security
+//   memorySaverEnabled      → Performance
+//   (Downloads / About are actions and links, no new keys)
 function settingsPage() {
-  const body = `
-    <h1>Settings</h1>
-    <div class="row"><div class="main"><div class="title">Block ads &amp; trackers</div><div class="url">Blocks known ad/tracker domains across all tabs</div></div>
-      <input type="checkbox" id="adBlockEnabled"></div>
-    <div class="row"><div class="main"><div class="title">Memory Saver</div><div class="url">Frees background tabs left unused for a while; they reload automatically when revisited</div></div>
-      <input type="checkbox" id="memorySaverEnabled"></div>
-    <div class="row"><div class="main"><div class="title">Homepage / new tab</div></div>
-      <input type="text" id="homepage" style="max-width:280px" placeholder="daybreak://newtab"></div>
-    <div class="row"><div class="main"><div class="title">Default search engine</div></div>
-      <select id="searchEngine">
-        <option value="google">Google</option>
-        <option value="bing">Bing</option>
-        <option value="duckduckgo">DuckDuckGo</option>
-      </select></div>
-    <div class="row"><div class="main"><div class="title">Show bookmarks bar</div></div>
-      <input type="checkbox" id="showBookmarksBar"></div>
-    <div class="row"><div class="main"><div class="title">Theme</div></div>
-      <select id="theme">
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select></div>
-    <div style="margin-top:16px">
-      <button class="action" id="saveBtn">Save</button>
-      <span id="savedMsg" style="font-size:12px;color:#188038;margin-left:8px;display:none">Saved</span>
-    </div>
-  `;
-  const script = `
-    function load() {
-      window.internalAPI.getSettings().then(function (s) {
-        document.getElementById('adBlockEnabled').checked = s.adBlockEnabled !== false;
-        document.getElementById('memorySaverEnabled').checked = s.memorySaverEnabled === true;
-        document.getElementById('homepage').value = s.homepage || 'daybreak://newtab';
-        document.getElementById('searchEngine').value = s.searchEngine || 'google';
-        document.getElementById('showBookmarksBar').checked = !!s.showBookmarksBar;
-        document.getElementById('theme').value = s.theme || 'light';
-      });
-    }
-    load();
-    document.getElementById('saveBtn').addEventListener('click', function () {
-      window.internalAPI.setSettings({
-        adBlockEnabled: document.getElementById('adBlockEnabled').checked,
-        memorySaverEnabled: document.getElementById('memorySaverEnabled').checked,
-        homepage: document.getElementById('homepage').value.trim() || 'daybreak://newtab',
-        searchEngine: document.getElementById('searchEngine').value,
-        showBookmarksBar: document.getElementById('showBookmarksBar').checked,
-        theme: document.getElementById('theme').value
-      }).then(function (s) {
-        document.body.classList.toggle('dark', s.theme === 'dark');
-        var msg = document.getElementById('savedMsg');
-        msg.style.display = 'inline';
-        setTimeout(function () { msg.style.display = 'none'; }, 1500);
-      });
-    });
-  `;
-  return shell('Settings', body, script);
-}
-
-function downloadsPage() {
-  const body = `
-    <h1>Downloads</h1>
-    <div class="toolbar"><button class="action danger" id="clearBtn">Clear list</button></div>
-    <div id="list"><div class="empty">Loading…</div></div>
-  `;
-  const script = `
-    function fmt(n) {
-      if (!n || n <= 0) return '0 B';
-      var units = ['B', 'KB', 'MB', 'GB']; var i = 0;
-      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-      return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
-    }
-    function row(d) {
-      var pct = d.total ? Math.round((d.received / d.total) * 100) : 0;
-      var size = d.total ? (fmt(d.received) + ' of ' + fmt(d.total)) : fmt(d.received);
-      var status = d.state === 'completed' ? 'Completed' : d.state === 'cancelled' ? 'Cancelled' : d.state === 'interrupted' ? 'Failed' : (pct + '%');
-      var actions = d.state === 'completed'
-        ? '<button class="icon-btn" data-open="' + escapeHtml(d.id) + '">Open</button><button class="icon-btn" data-show="' + escapeHtml(d.id) + '">Show in folder</button>'
-        : '';
-      // filename/url come from the remote server (Content-Disposition, the
-      // download URL) — page-controlled, so escaped.
-      return '<div class="row"><div class="main"><div class="title">' + escapeHtml(d.filename) + '</div><div class="url">' + escapeHtml(d.url) + '</div>' +
-        (d.state === 'progressing' ? '<div style="font-size:11px;color:var(--text-dim);margin-top:2px">' + size + '</div><div class="progress-track"><div class="progress-fill" style="width:' + pct + '%"></div></div>' : '<div style="font-size:11px;color:var(--text-dim);margin-top:2px">' + fmt(d.received) + '</div>') +
-        '</div><span class="meta">' + status + '</span>' + actions + '</div>';
-    }
-    function render(list) {
-      var el = document.getElementById('list');
-      if (!list.length) { el.innerHTML = '<div class="empty">No downloads yet</div>'; return; }
-      el.innerHTML = list.slice().reverse().map(row).join('');
-      el.querySelectorAll('[data-open]').forEach(function (b) {
-        b.addEventListener('click', function () { window.internalAPI.openDownload(b.getAttribute('data-open')); });
-      });
-      el.querySelectorAll('[data-show]').forEach(function (b) {
-        b.addEventListener('click', function () { window.internalAPI.showDownloadInFolder(b.getAttribute('data-show')); });
-      });
-    }
-    var timer = null;
-    function refresh() {
-      window.internalAPI.getDownloads().then(function (list) {
-        render(list);
-        var anyActive = list.some(function (d) { return d.state === 'progressing'; });
-        if (anyActive && !timer) timer = setInterval(refresh, 800);
-        if (!anyActive && timer) { clearInterval(timer); timer = null; }
-      });
-    }
-    refresh();
-    document.getElementById('clearBtn').addEventListener('click', function () {
-      window.internalAPI.clearDownloads().then(render);
-    });
-  `;
-  return shell('Downloads', body, script);
-}
-
-function aboutPage() {
   const dev = credit(pkg.author, DEVELOPER);
   const org = credit(pkg.organization, ORGANIZATION);
   const link = (c, label) => c.url
-    ? `<a data-ext href="${escapeHtml(c.url)}" title="${escapeHtml(c.url)}" style="color:var(--accent);text-decoration:none">${escapeHtml(label || c.name)}</a>`
+    ? `<a data-ext href="${escapeHtml(c.url)}" title="${escapeHtml(c.url)}" style="color:var(--accent);text-decoration:none;font-size:inherit">${escapeHtml(label || c.name)}</a>`
     : `<span style="color:var(--text-dim)">${escapeHtml(c.name || '—')}</span>`;
   const body = `
-    <div style="text-align:center;padding-top:8vh">
-      <div style="width:40px;height:40px;border-radius:50%;border:2px solid var(--accent);
-                  border-bottom-color:transparent;transform:rotate(-45deg);margin:0 auto 16px"></div>
-      <div style="font-size:20px;font-weight:600;margin-bottom:4px">Daybreak</div>
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:24px">Version ${pkg.version}</div>
-      <div style="font-size:12px;color:var(--text-dim);line-height:1.9">
-        Electron ${process.versions.electron || '—'}<br>
-        Chromium ${process.versions.chrome || '—'}<br>
-        Node ${process.versions.node || '—'}
-      </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:24px">
-        Developer: ${link(dev)}
-      </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-        Organization: ${link(org)}
-      </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:6px">
-        Source code: ${link(SOURCE_CODE, SOURCE_CODE.name)}
-      </div>
+    <style>
+      /* Page-scoped layout: reset the shared .wrap column so the fixed
+         sidebar + scrolling content structure can take over. */
+      .wrap { max-width: none; margin: 0; padding: 0; }
+      .st-root { background: #f1f3f4; min-height: 100vh; --card: #ffffff; }
+      body.dark .st-root { background: #202124; --card: #292a2d; }
+      .st-nav {
+        position: fixed; top: 0; bottom: 0; left: 0; width: 236px;
+        padding: 14px 8px 20px; overflow-y: auto;
+        background: var(--bg); border-right: 1px solid var(--border);
+      }
+      .st-search { position: relative; margin: 0 8px 14px; }
+      .st-search input {
+        width: 100%; padding: 9px 12px 9px 34px; border: 1px solid transparent;
+        border-radius: 18px; background: #f1f3f4; color: var(--text);
+        font-size: 13px; outline: none;
+      }
+      body.dark .st-search input { background: var(--hover); }
+      .st-search input:focus { background: var(--bg); border-color: var(--accent); }
+      .st-search svg {
+        position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+        width: 14px; height: 14px; fill: none; stroke: var(--text-dim); stroke-width: 2;
+      }
+      .st-nav-item {
+        display: block; width: 100%; text-align: left; padding: 9px 16px;
+        border: none; background: transparent; color: var(--text-dim);
+        font-size: 13px; line-height: 1.3; border-radius: 0 18px 18px 0;
+        cursor: pointer; margin: 1px 0;
+      }
+      .st-nav-item:hover { background: var(--hover); color: var(--text); }
+      .st-nav-item.active {
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        color: var(--accent); font-weight: 600;
+      }
+      .st-nav-label { padding: 16px 16px 5px; font-size: 11px; color: var(--text-dim); }
+      .st-nav-sep { height: 1px; background: var(--border); margin: 12px 14px; }
+      .st-main { margin-left: 236px; padding: 28px 0 120px; }
+      .st-col { max-width: 672px; margin: 0 auto; padding: 0 24px; }
+      section { scroll-margin-top: 20px; margin-bottom: 20px; }
+      .card { background: var(--card); border-radius: 12px; padding: 4px 0 2px; }
+      .card h2 { font-size: 15px; font-weight: 600; margin: 0; padding: 16px 20px 6px; }
+      .srow {
+        display: flex; align-items: center; gap: 16px;
+        padding: 12px 20px; border-top: 1px solid var(--border);
+      }
+      .srow .s-main { flex: 1; min-width: 0; }
+      .srow .s-title { font-size: 13.5px; color: var(--text); }
+      .srow .s-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; line-height: 1.5; }
+      /* Sized to match .s-title: an unstyled inline element here (the credit
+         links below) would fall back to the browser's default font size and
+         render visibly larger than the text around it. */
+      .s-ctl { flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+      .st-home input[type="text"] { width: 240px; }
+      .se-option {
+        display: flex; align-items: flex-start; gap: 14px;
+        padding: 13px 20px; cursor: pointer; border-top: 1px solid var(--border);
+      }
+      .se-option:hover { background: var(--hover); }
+      .se-option input {
+        margin: 2px 0 0; width: 16px; height: 16px;
+        accent-color: var(--accent); flex-shrink: 0; cursor: pointer;
+      }
+      .se-option .s-main { flex: 1; min-width: 0; }
+      .se-option .s-title { display: block; font-size: 13.5px; color: var(--text); }
+      .se-option .s-desc { display: block; font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+      /* Pill toggle switch (checkbox is real and focusable, only visuals are custom) */
+      .switch { position: relative; display: inline-block; width: 38px; height: 20px; flex-shrink: 0; }
+      .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+      .switch .track {
+        position: absolute; inset: 0; border-radius: 10px; background: var(--border);
+        transition: background .14s ease; pointer-events: none;
+      }
+      .switch .track::after {
+        content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px;
+        border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+        transition: transform .14s ease;
+      }
+      .switch input:checked + .track { background: var(--accent); }
+      .switch input:checked + .track::after { transform: translateX(18px); }
+      .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+      button.secondary.danger-text { color: var(--danger); }
+      #noResults { padding: 48px 0; }
+      @media (max-width: 760px) {
+        .st-nav { position: static; width: auto; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+        .st-main { margin-left: 0; }
+      }
+    </style>
+    <div class="st-root">
+      <aside class="st-nav">
+        <div class="st-search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+          <input type="search" id="stSearch" placeholder="Search settings" autocomplete="off" aria-label="Search settings">
+        </div>
+        <nav aria-label="Settings sections">
+          <button class="st-nav-item active" data-goto="appearance">Appearance</button>
+          <button class="st-nav-item" data-goto="search">Search engine</button>
+          <button class="st-nav-item" data-goto="startup">On startup</button>
+          <div class="st-nav-label">Advanced</div>
+          <button class="st-nav-item" data-goto="downloads">Downloads</button>
+          <button class="st-nav-item" data-goto="privacy">Privacy and security</button>
+          <button class="st-nav-item" data-goto="performance">Performance</button>
+          <div class="st-nav-sep"></div>
+          <button class="st-nav-item" data-goto="about">About Daybreak</button>
+        </nav>
+      </aside>
+      <main class="st-main">
+        <div class="st-col">
+          <section id="sec-appearance" data-section="appearance">
+            <div class="card">
+              <h2>Appearance</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Theme</div>
+                  <div class="s-desc">Applies to the toolbar, menus and every internal page; websites keep their own look</div>
+                </div>
+                <div class="s-ctl">
+                  <select id="theme" aria-label="Theme">
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+              </div>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Show bookmarks bar</div>
+                  <div class="s-desc">Shows your bookmarks under the address bar in every window</div>
+                </div>
+                <div class="s-ctl">
+                  <label class="switch"><input type="checkbox" id="showBookmarksBar" aria-label="Show bookmarks bar"><span class="track"></span></label>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section id="sec-search" data-section="search">
+            <div class="card">
+              <h2>Search engine</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Search engine used in the address bar</div>
+                  <div class="s-desc">Anything typed that is not a URL is sent to this engine</div>
+                </div>
+              </div>
+              <label class="se-option"><input type="radio" name="searchEngine" value="google"><span class="s-main"><span class="s-title">Google</span><span class="s-desc">google.com</span></span></label>
+              <label class="se-option"><input type="radio" name="searchEngine" value="bing"><span class="s-main"><span class="s-title">Bing</span><span class="s-desc">bing.com</span></span></label>
+              <label class="se-option"><input type="radio" name="searchEngine" value="duckduckgo"><span class="s-main"><span class="s-title">DuckDuckGo</span><span class="s-desc">duckduckgo.com</span></span></label>
+            </div>
+          </section>
+          <section id="sec-startup" data-section="startup">
+            <div class="card">
+              <h2>On startup</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Homepage</div>
+                  <div class="s-desc">Opened when Daybreak starts and whenever a new tab is created</div>
+                </div>
+                <div class="s-ctl st-home">
+                  <input type="text" id="homepage" placeholder="daybreak://newtab" spellcheck="false" aria-label="Homepage">
+                  <button class="icon-btn" id="homepageReset" title="Reset to the New Tab page">Reset</button>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section id="sec-downloads" data-section="downloads">
+            <div class="card">
+              <h2>Downloads</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Download list</div>
+                  <div class="s-desc">Live progress and past downloads, on its own page</div>
+                </div>
+                <div class="s-ctl"><button class="secondary" id="openDownloads">Open page</button></div>
+              </div>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Clear the download list</div>
+                  <div class="s-desc">Removes the list entries; files already on disk are untouched</div>
+                </div>
+                <div class="s-ctl"><button class="secondary danger-text" id="clearDownloads">Clear list</button></div>
+              </div>
+            </div>
+          </section>
+          <section id="sec-privacy" data-section="privacy">
+            <div class="card">
+              <h2>Privacy and security</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Block ads &amp; trackers</div>
+                  <div class="s-desc">Blocks known ad/tracker domains in every window, private ones included</div>
+                </div>
+                <div class="s-ctl">
+                  <label class="switch"><input type="checkbox" id="adBlockEnabled" aria-label="Block ads and trackers"><span class="track"></span></label>
+                </div>
+              </div>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Delete browsing history</div>
+                  <div class="s-desc">Removes every entry from the History page; cannot be undone</div>
+                </div>
+                <div class="s-ctl"><button class="secondary danger-text" id="clearHistory">Delete…</button></div>
+              </div>
+            </div>
+          </section>
+          <section id="sec-performance" data-section="performance">
+            <div class="card">
+              <h2>Performance</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Memory Saver</div>
+                  <div class="s-desc">Frees background tabs left unused for a while; they reload automatically when revisited. Active, pinned and playing tabs are never freed.</div>
+                </div>
+                <div class="s-ctl">
+                  <label class="switch"><input type="checkbox" id="memorySaverEnabled" aria-label="Memory Saver"><span class="track"></span></label>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section id="sec-about" data-section="about">
+            <div class="card">
+              <h2>About Daybreak</h2>
+              <div class="srow">
+                <div class="s-main">
+                  <div class="s-title">Daybreak ${escapeHtml(pkg.version)}</div>
+                  <div class="s-desc">Electron ${escapeHtml(process.versions.electron || '—')} · Chromium ${escapeHtml(process.versions.chrome || '—')} · Node ${escapeHtml(process.versions.node || '—')}</div>
+                </div>
+              </div>
+              <div class="srow"><div class="s-main"><div class="s-title">Developer</div></div><div class="s-ctl">${link(dev)}</div></div>
+              <div class="srow"><div class="s-main"><div class="s-title">Organization</div></div><div class="s-ctl">${link(org)}</div></div>
+              <div class="srow"><div class="s-main"><div class="s-title">Source code</div></div><div class="s-ctl">${link(SOURCE_CODE, SOURCE_CODE.name)}</div></div>
+            </div>
+          </section>
+          <div class="empty" id="noResults" style="display:none">No settings match your search</div>
+        </div>
+      </main>
     </div>
   `;
   const script = `
-    // Credit links open inside Daybreak, never in the OS default browser:
-    // a plain click opens the URL as a new tab of this window, and middle
-    // click or Ctrl/Cmd+click opens it in the background — the same
-    // contract as the bookmark chips and the New Tab tiles. The wiring
-    // degrades gracefully on purpose: if the tab bridge is missing the
-    // open-tab call (or the main process has no handler for it), the link
-    // falls back to a plain navigation of the current tab, which is still
-    // inside Daybreak — a credit click can never end up doing nothing.
+    var API = window.internalAPI;
+
+    // ---------- load current values ----------
+    API.getSettings().then(function (s) {
+      s = s || {};
+      document.getElementById('theme').value = s.theme === 'dark' ? 'dark' : 'light';
+      document.getElementById('showBookmarksBar').checked = !!s.showBookmarksBar;
+      document.getElementById('adBlockEnabled').checked = s.adBlockEnabled !== false;
+      document.getElementById('memorySaverEnabled').checked = s.memorySaverEnabled === true;
+      document.getElementById('homepage').value = s.homepage || 'daybreak://newtab';
+      var radio = document.querySelector('input[name="searchEngine"][value="' + (s.searchEngine || 'google') + '"]');
+      if (radio) radio.checked = true;
+      document.body.classList.toggle('dark', s.theme === 'dark');
+    }).catch(function () {});
+
+    // ---------- save on change (no Save button) ----------
+    function save(patch, after) {
+      API.setSettings(patch).then(function (s) {
+        document.body.classList.toggle('dark', s.theme === 'dark');
+        if (after) after(s);
+      }).catch(function () { showToast('Could not save the setting'); });
+    }
+    document.getElementById('theme').addEventListener('change', function (e) {
+      save({ theme: e.target.value });
+    });
+    document.getElementById('showBookmarksBar').addEventListener('change', function (e) {
+      save({ showBookmarksBar: e.target.checked });
+    });
+    document.getElementById('adBlockEnabled').addEventListener('change', function (e) {
+      save({ adBlockEnabled: e.target.checked });
+    });
+    document.getElementById('memorySaverEnabled').addEventListener('change', function (e) {
+      save({ memorySaverEnabled: e.target.checked });
+    });
+    document.querySelectorAll('input[name="searchEngine"]').forEach(function (r) {
+      r.addEventListener('change', function (e) { save({ searchEngine: e.target.value }); });
+    });
+    var homepage = document.getElementById('homepage');
+    homepage.addEventListener('change', function () {
+      var v = homepage.value.trim() || 'daybreak://newtab';
+      homepage.value = v;
+      save({ homepage: v });
+    });
+    document.getElementById('homepageReset').addEventListener('click', function () {
+      homepage.value = 'daybreak://newtab';
+      save({ homepage: 'daybreak://newtab' });
+    });
+
+    // ---------- actions (the destructive ones confirm first) ----------
+    document.getElementById('openDownloads').addEventListener('click', function () {
+      if (API && typeof API.openInTab === 'function') API.openInTab('daybreak://downloads');
+      else window.location.href = 'daybreak://downloads';
+    });
+    document.getElementById('clearDownloads').addEventListener('click', function () {
+      if (!window.confirm('Clear the download list? Files already on disk are not touched.')) return;
+      API.clearDownloads().then(function () { showToast('Download list cleared'); });
+    });
+    document.getElementById('clearHistory').addEventListener('click', function () {
+      if (!window.confirm('Delete all browsing history? This cannot be undone.')) return;
+      API.clearHistory().then(function () { showToast('Browsing history deleted'); });
+    });
+
+    // ---------- sidebar: click-to-jump + highlight while scrolling ----------
+    var navItems = document.querySelectorAll('.st-nav-item[data-goto]');
+    var spySuppressed = false, suppressTimer = null;
+    function setActive(id) {
+      navItems.forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-goto') === id);
+      });
+    }
+    navItems.forEach(function (b) {
+      b.addEventListener('click', function () {
+        var sec = document.getElementById('sec-' + b.getAttribute('data-goto'));
+        if (!sec || sec.style.display === 'none') return;
+        setActive(b.getAttribute('data-goto'));
+        // Suppress the scroll-spy while the smooth scroll is in flight:
+        // the last sections can never reach the top of the viewport (the
+        // document ends first), so the spy would immediately mark the
+        // section above the one that was clicked.
+        spySuppressed = true;
+        clearTimeout(suppressTimer);
+        suppressTimer = setTimeout(function () { spySuppressed = false; }, 1000);
+        sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    window.addEventListener('scrollend', function () { spySuppressed = false; });
+    var sections = document.querySelectorAll('section[data-section]');
+    function spy() {
+      if (spySuppressed) return;
+      // At the very bottom of the document the last section (About) can
+      // never cross the top threshold — highlight it directly.
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4) {
+        var last = sections[sections.length - 1];
+        if (last) setActive(last.getAttribute('data-section'));
+        return;
+      }
+      var y = window.scrollY + 140, current = null;
+      sections.forEach(function (sec) {
+        if (sec.style.display !== 'none' && sec.offsetTop <= y) current = sec.getAttribute('data-section');
+      });
+      if (current) setActive(current);
+    }
+    window.addEventListener('scroll', spy, { passive: true });
+    spy();
+
+    // ---------- settings search: hide non-matching rows, collapse empty sections ----------
+    var searchBox = document.getElementById('stSearch');
+    function applyFilter() {
+      var q = searchBox.value.trim().toLowerCase();
+      var any = false;
+      sections.forEach(function (sec) {
+        var rows = sec.querySelectorAll('.srow, .se-option');
+        var shown = 0;
+        rows.forEach(function (row) {
+          var hit = !q || row.textContent.toLowerCase().indexOf(q) >= 0;
+          row.style.display = hit ? '' : 'none';
+          if (hit) shown++;
+        });
+        var visible = !q || shown > 0;
+        sec.style.display = visible ? '' : 'none';
+        if (visible) any = true;
+      });
+      document.getElementById('noResults').style.display = (q && !any) ? '' : 'none';
+      spy();
+    }
+    searchBox.addEventListener('input', applyFilter);
+    searchBox.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        searchBox.value = '';
+        applyFilter();
+        searchBox.blur();
+      }
+    });
+
+    // ---------- credit links open inside Daybreak (same wiring as the About page) ----------
     (function () {
       function openCredit(url, background) {
-        if (window.internalAPI && typeof window.internalAPI.openInTab === 'function') {
-          var p = window.internalAPI.openInTab(url, { background: !!background });
+        if (API && typeof API.openInTab === 'function') {
+          var p = API.openInTab(url, { background: !!background });
           if (p && typeof p.catch === 'function') {
             p.catch(function () { window.location.href = url; });
           }
@@ -775,7 +1266,108 @@ function aboutPage() {
       });
     })();
   `;
-  return shell('About', body, script);
+  return shell('Settings', body, script);
+}
+
+function downloadsPage() {
+  const body = `
+    <section class="p-card" data-filtergroup>
+      <div class="p-head">
+        <h2>Downloads</h2>
+        <div class="p-actions"><button class="secondary danger-text" id="clearBtn">Clear list</button></div>
+      </div>
+      <div id="list"><div class="empty">Loading…</div></div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching downloads</div>
+  `;
+  const script = `
+    function fmt(n) {
+      if (!n || n <= 0) return '0 B';
+      var units = ['B', 'KB', 'MB', 'GB']; var i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+    }
+    function row(d) {
+      var pct = d.total ? Math.round((d.received / d.total) * 100) : 0;
+      var size = d.total ? (fmt(d.received) + ' of ' + fmt(d.total)) : fmt(d.received);
+      var status = d.state === 'completed' ? 'Completed' : d.state === 'cancelled' ? 'Cancelled' : d.state === 'interrupted' ? 'Failed' : (pct + '%');
+      var actions = d.state === 'completed'
+        ? '<button class="icon-btn" data-open="' + escapeHtml(d.id) + '">Open</button><button class="icon-btn" data-show="' + escapeHtml(d.id) + '">Show in folder</button>'
+        : '';
+      // filename/url come from the remote server (Content-Disposition, the
+      // download URL) — page-controlled, so escaped.
+      return '<div class="p-row" data-filter><div class="p-main"><div class="p-title">' + escapeHtml(d.filename) + '</div><div class="p-sub">' + escapeHtml(d.url) + '</div>' +
+        (d.state === 'progressing' ? '<div style="font-size:11px;color:var(--text-dim);margin-top:2px">' + size + '</div><div class="progress-track"><div class="progress-fill" style="width:' + pct + '%"></div></div>' : '<div style="font-size:11px;color:var(--text-dim);margin-top:2px">' + fmt(d.received) + '</div>') +
+        '</div><span class="p-meta">' + status + '</span>' + actions + '</div>';
+    }
+    function render(list) {
+      var el = document.getElementById('list');
+      if (!list.length) {
+        el.innerHTML = '<div class="empty">No downloads yet</div>';
+      } else {
+        el.innerHTML = list.slice().reverse().map(row).join('');
+        el.querySelectorAll('[data-open]').forEach(function (b) {
+          b.addEventListener('click', function () { window.internalAPI.openDownload(b.getAttribute('data-open')); });
+        });
+        el.querySelectorAll('[data-show]').forEach(function (b) {
+          b.addEventListener('click', function () { window.internalAPI.showDownloadInFolder(b.getAttribute('data-show')); });
+        });
+      }
+      panelFilter();
+    }
+    var timer = null;
+    function refresh() {
+      window.internalAPI.getDownloads().then(function (list) {
+        render(list);
+        var anyActive = list.some(function (d) { return d.state === 'progressing'; });
+        if (anyActive && !timer) timer = setInterval(refresh, 800);
+        if (!anyActive && timer) { clearInterval(timer); timer = null; }
+      });
+    }
+    refresh();
+    document.getElementById('clearBtn').addEventListener('click', function () {
+      window.internalAPI.clearDownloads().then(render);
+    });
+  `;
+  return panelShell({ title: 'Downloads', active: 'downloads', search: 'Search downloads', body: body, script: script });
+}
+
+function aboutPage() {
+  const dev = credit(pkg.author, DEVELOPER);
+  const org = credit(pkg.organization, ORGANIZATION);
+  const link = (c, label) => c.url
+    ? `<a data-ext href="${escapeHtml(c.url)}" title="${escapeHtml(c.url)}" style="color:var(--accent);text-decoration:none;font-size:inherit">${escapeHtml(label || c.name)}</a>`
+    : `<span style="color:var(--text-dim)">${escapeHtml(c.name || '—')}</span>`;
+  const body = `
+    <section class="p-card" data-filtergroup>
+      <div class="p-head"><h2>About Daybreak</h2></div>
+      <div class="p-row" data-filter>
+        <span class="p-logo" aria-hidden="true"></span>
+        <div class="p-main">
+          <div class="p-title">Daybreak ${escapeHtml(pkg.version)}</div>
+          <div class="p-sub">Electron ${escapeHtml(process.versions.electron || '—')} · Chromium ${escapeHtml(process.versions.chrome || '—')} · Node ${escapeHtml(process.versions.node || '—')}</div>
+        </div>
+      </div>
+      <div class="p-row" data-filter>
+        <div class="p-main"><div class="p-title">Developer</div></div>
+        <div class="p-ctl">${link(dev)}</div>
+      </div>
+      <div class="p-row" data-filter>
+        <div class="p-main"><div class="p-title">Organization</div></div>
+        <div class="p-ctl">${link(org)}</div>
+      </div>
+      <div class="p-row" data-filter>
+        <div class="p-main"><div class="p-title">Source code</div></div>
+        <div class="p-ctl">${link(SOURCE_CODE)}</div>
+      </div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching rows</div>
+  `;
+  // The data-ext credit wiring (plain click opens a tab inside Daybreak,
+  // middle click / Ctrl+click opens it in the background, graceful fallback
+  // to plain navigation) ships with the shared panel script — the page has
+  // no script of its own.
+  return panelShell({ title: 'About', active: 'about', search: 'Search', body: body, script: '' });
 }
 
 // Main-process-side escaper for strings that are baked into page HTML HERE
@@ -789,12 +1381,12 @@ function escapeHtml(s) {
 
 function viewSourcePage(url, html) {
   const body = `
-    <h1 style="word-break:break-all">Source of ${escapeHtml(url || '')}</h1>
-    <pre style="white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Consolas,Menlo,monospace;
-                font-size:12px;line-height:1.5;background:var(--panel);border:1px solid var(--border);
-                border-radius:8px;padding:16px;margin:0">${escapeHtml(html || '')}</pre>
+    <section class="p-card">
+      <div class="p-head"><h2 style="white-space:normal">Source of ${escapeHtml(url || '')}</h2></div>
+      <pre class="p-pre">${escapeHtml(html || '')}</pre>
+    </section>
   `;
-  return shell('View Source', body, '');
+  return panelShell({ title: 'View Source', active: '', body: body, script: '' });
 }
 
 // Small self-contained tools bundled into Daybreak, reachable from the new
@@ -812,7 +1404,7 @@ const APPS = [
 
 function appCardHtml(app) {
   return `
-    <a class="app-card" href="${app.url}">
+    <a class="app-card" data-filter href="${app.url}">
       <div class="app-card-mark">${escapeHtml(app.mark || app.name[0])}</div>
       <div class="app-card-name">${escapeHtml(app.name)}</div>
       <div class="app-card-desc">${escapeHtml(app.description)}</div>
@@ -822,13 +1414,14 @@ function appCardHtml(app) {
 
 function appsPage() {
   const body = `
-    <h1>Apps</h1>
-    <p style="color:var(--text-dim);font-size:12px;margin:-10px 0 20px">
-      Small self-contained tools built into Daybreak. More will show up here over time.
-    </p>
-    <div class="apps-grid">${APPS.map(appCardHtml).join('')}</div>
+    <section class="p-card" data-filtergroup>
+      <div class="p-head"><h2>Apps</h2></div>
+      <div class="p-lede">Small self-contained tools built into Daybreak. More will show up here over time.</div>
+      <div style="padding:2px 20px 18px"><div class="apps-grid">${APPS.map(appCardHtml).join('')}</div></div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching apps</div>
   `;
-  return shell('Apps', body, '');
+  return panelShell({ title: 'Apps', active: 'apps', search: 'Search apps', body: body, script: '' });
 }
 
 // Live process metrics straight from Electron (app.getAppMetrics), matched
@@ -838,12 +1431,13 @@ function appsPage() {
 // markup.
 function performancePage() {
   const body = `
-    <h1>Performance</h1>
-    <p style="color:var(--text-dim);font-size:12px;margin:-10px 0 16px">
-      Live resource use for every Daybreak process, measured by Electron itself. Updates every two seconds.
-    </p>
-    <div id="summary" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></div>
-    <div id="rows"></div>
+    <section class="p-card" data-filtergroup>
+      <div class="p-head"><h2>Performance</h2></div>
+      <div class="p-lede">Live resource use for every Daybreak process, measured by Electron itself. Updates every two seconds.</div>
+      <div id="summary" class="p-lede" style="padding-top:0"></div>
+      <div id="rows"></div>
+    </section>
+    <div class="empty pn-hide" id="pnNoResults">No matching processes</div>
   `;
   const script = `
     function labelFor(m) {
@@ -857,39 +1451,44 @@ function performancePage() {
         var total = list.reduce(function (s, m) { return s + m.memoryMB; }, 0);
         var cpuTotal = list.reduce(function (s, m) { return s + m.cpuPercent; }, 0);
         document.getElementById("summary").textContent =
-          list.length + " processes  \\u00b7  " + total + " MB total  \\u00b7  " + cpuTotal.toFixed(1) + "% CPU";
+          list.length + " processes  \u00b7  " + total + " MB total  \u00b7  " + cpuTotal.toFixed(1) + "% CPU";
+        // Built with DOM APIs / textContent rather than innerHTML on
+        // purpose: tab titles and URLs are page-controlled strings, so
+        // they must never be parsed as markup.
         var el = document.getElementById("rows");
         el.textContent = "";
         list.forEach(function (m) {
           var lbl = labelFor(m);
           var row = document.createElement("div");
-          row.className = "row";
+          row.className = "p-row";
+          row.setAttribute("data-filter", "");
           var main = document.createElement("div");
-          main.className = "main";
+          main.className = "p-main";
           var t = document.createElement("div");
-          t.className = "title";
+          t.className = "p-title";
           t.textContent = lbl.title;
           main.appendChild(t);
           if (lbl.sub) {
             var u = document.createElement("div");
-            u.className = "url";
+            u.className = "p-sub";
             u.textContent = lbl.sub;
             main.appendChild(u);
           }
           var meta = document.createElement("span");
-          meta.className = "meta";
+          meta.className = "p-meta";
           meta.style.whiteSpace = "nowrap";
-          meta.textContent = m.memoryMB + " MB  \\u00b7  " + m.cpuPercent.toFixed(1) + "% CPU  \\u00b7  PID " + m.pid;
+          meta.textContent = m.memoryMB + " MB  \u00b7  " + m.cpuPercent.toFixed(1) + "% CPU  \u00b7  PID " + m.pid;
           row.appendChild(main);
           row.appendChild(meta);
           el.appendChild(row);
         });
+        panelFilter();
       });
     }
     refresh();
     setInterval(refresh, 2000);
   `;
-  return shell('Performance', body, script);
+  return panelShell({ title: 'Performance', active: 'performance', search: 'Search processes', body: body, script: script });
 }
 
 // ---------------- error page ----------------
@@ -937,7 +1536,7 @@ const NET_ERROR_NAMES = {
 // Codes that mean "the certificate failed verification". These get the
 // "Your connection is not private" treatment with a Details/proceed section.
 // ERR_SSL_PROTOCOL_ERROR (-325) is NOT here: there is no certificate to
-// make an exception for, so that page offers no bypass, like Chrome.
+// make an exception for, so that page offers no bypass at all.
 const CERT_ERROR_CODES = new Set([
   '-200', '-201', '-202', '-203', '-204', '-205', '-206', '-207', '-208',
   '-209', '-210', '-211', '-216', '-501'
@@ -961,7 +1560,7 @@ function errorIcon(kind) {
   return svg('<rect x="8" y="12" width="48" height="40" rx="6"/><line x1="8" y1="22" x2="56" y2="22"/><line x1="25" y1="32" x2="39" y2="46"/>');
 }
 
-// The full Chrome-style failure page. Everything page-controlled (the URL,
+// The full failure page. Everything page-controlled (the URL,
 // the host) goes through escapeHtml; the headings/descriptions are static
 // strings chosen by error code here in the main process, so no page data is
 // ever interpolated unescaped.
@@ -1030,10 +1629,10 @@ function errorPage(params) {
 
   const secondaryBtn = 'padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font-size:13px;cursor:pointer';
 
-  // "Go back" only renders when there is a real page to go back TO (Chrome
-  // hides it on a first-load failure too). Certificate pages always keep
+  // "Go back" only renders when there is a real page to go back TO (it is
+  // hidden on a first-load failure too). Certificate pages always keep
   // "Back to safety" — with no committed page behind the failure it falls
-  // back to the New Tab page, which is Chrome's own fallback as well.
+  // back to the New Tab page.
   const backTarget = back || (isCert ? 'daybreak://newtab' : '');
   const backBtnHtml = backTarget
     ? '<button id="backBtn" style="' + secondaryBtn + '" data-back="' + escapeHtml(backTarget) + '">' + (isCert ? 'Back to safety' : 'Go back') + '</button>'
@@ -1049,18 +1648,20 @@ function errorPage(params) {
     : '';
 
   const body = `
-    <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:9vh">
-      ${errorIcon(kind)}
-      <h1 style="font-size:22px;font-weight:600;letter-spacing:-.01em;margin:22px 0 12px">${heading}</h1>
-      <p style="max-width:560px;font-size:13.5px;color:var(--text-dim);line-height:1.7;margin:0 0 10px">${desc}</p>
-      ${codeLabel ? '<div style="font-size:11px;color:var(--text-dim);font-family:ui-monospace,Consolas,Menlo,monospace">' + codeLabel + '</div>' : ''}
-      ${url ? '<div style="font-size:11px;color:var(--text-dim);font-family:ui-monospace,Consolas,Menlo,monospace;word-break:break-all;max-width:560px;margin-top:6px">' + escapeHtml(url) + '</div>' : ''}
-      <div style="display:flex;gap:10px;margin-top:28px;flex-wrap:wrap;justify-content:center">
-        <button id="retryBtn" class="action" data-url="${escapeHtml(url)}">Reload</button>
-        ${backBtnHtml}
-        ${advHtml}
+    <section class="p-card" style="padding:0">
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:40px 24px 44px">
+        ${errorIcon(kind)}
+        <h1 style="font-size:22px;font-weight:600;letter-spacing:-.01em;margin:22px 0 12px">${heading}</h1>
+        <p style="max-width:560px;font-size:13.5px;color:var(--text-dim);line-height:1.7;margin:0 0 10px">${desc}</p>
+        ${codeLabel ? '<div style="font-size:11px;color:var(--text-dim);font-family:ui-monospace,Consolas,Menlo,monospace">' + codeLabel + '</div>' : ''}
+        ${url ? '<div style="font-size:11px;color:var(--text-dim);font-family:ui-monospace,Consolas,Menlo,monospace;word-break:break-all;max-width:560px;margin-top:6px">' + escapeHtml(url) + '</div>' : ''}
+        <div style="display:flex;gap:10px;margin-top:28px;flex-wrap:wrap;justify-content:center">
+          <button id="retryBtn" class="action" data-url="${escapeHtml(url)}">Reload</button>
+          ${backBtnHtml}
+          ${advHtml}
+        </div>
       </div>
-    </div>
+    </section>
   `;
 
   const script = `
@@ -1074,7 +1675,7 @@ function errorPage(params) {
     // landed on the identical error page behind it. Either way the button
     // looked dead. The main process instead passes the last URL that truly
     // committed in data-back; replacing onto it skips every dead entry in
-    // one deterministic hop, exactly what Chrome's own error-page Back does.
+    // one deterministic hop.
     function goBack() {
       if (backBtn) location.replace(backBtn.getAttribute('data-back'));
     }
@@ -1095,7 +1696,10 @@ function errorPage(params) {
       else if (e.key === 'Escape' && backBtn) { e.preventDefault(); goBack(); }
     });
   `;
-  return shell('Error', body, script);
+  // The error pages use the shared sidebar structure too (without the
+  // search box — there is nothing on an error page to filter), so a failed
+  // load always leaves the sidebar one click away.
+  return panelShell({ title: 'Error', active: '', body: body, script: script });
 }
 
 module.exports = { newTabPage, bookmarksPage, historyPage, settingsPage, downloadsPage, aboutPage, viewSourcePage, appsPage, performancePage, errorPage, APPS };
