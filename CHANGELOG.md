@@ -193,3 +193,8 @@ First public release. Same feature set as 0.9.2.
 ### Added
 - Tabs, address bar, back, forward and reload, with the UI in an overlay view
   and IPC through a context-bridge preload.
+
+## 0.1.0
+
+### Added
+- Initial release: A minimal multi-tab desktop browser built on Electron's BaseWindow and WebContentsView APIs
